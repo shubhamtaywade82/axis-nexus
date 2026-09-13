@@ -3,6 +3,9 @@
   "version": "0.4.1",
   "description": "Node.js Execution Sidecar for DhanHQ v2 using @nemesis-oss/dhanhq-sdk",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "start": "ts-node src/server.ts",
@@ -28,7 +31,8 @@
     "subscribe:indices": "ts-node scripts/subscribe-indices.ts",
     "backtest:long-option-policy": "ts-node scripts/backtest-long-option-policy.ts",
     "watch:sandbox-supertrend": "ts-node scripts/sandbox-supertrend-watch.ts",
-    "test": "jest --forceExit"
+    "test": "jest --forceExit",
+    "test:coverage": "jest --forceExit --coverage --coverageThreshold='{\"global\":{\"branches\":60,\"functions\":60,\"lines\":60,\"statements\":60}}'"
   },
   "dependencies": {
     "@nemesis-oss/dhanhq-sdk": "^1.1.0",
