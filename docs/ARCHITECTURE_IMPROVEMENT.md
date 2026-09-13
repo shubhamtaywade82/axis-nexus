@@ -1,10 +1,10 @@
-think like an architect of a trading system and review this dhanhq-node paper trading system for options trading in indices like NIFTY, sensex and banknifty we need to have both ce/pe buying and selling and agentic ai based options trading with trailing sl and tp, with all possible options trading strategies and backtesting enabled system which can work without any human intervention and the monitoring frontend should be realtime find flaws as an architect and also suggest solutions on how to handle such a system in a robust way where It can run paper trading on a laptop with real market data from dhanhq rest api and websockets connections handle all possible scenarios and not fail at any point even if it fails it should be able to recover reconcile and handle all error etc
+think like an architect of a trading system and review this axis-nexus paper trading system for options trading in indices like NIFTY, sensex and banknifty we need to have both ce/pe buying and selling and agentic ai based options trading with trailing sl and tp, with all possible options trading strategies and backtesting enabled system which can work without any human intervention and the monitoring frontend should be realtime find flaws as an architect and also suggest solutions on how to handle such a system in a robust way where It can run paper trading on a laptop with real market data from dhanhq rest api and websockets connections handle all possible scenarios and not fail at any point even if it fails it should be able to recover reconcile and handle all error etc
 
-@GitHub https://github.com/shubhamtaywade82/dhanhq-node
+@GitHub https://github.com/shubhamtaywade82/axis-nexus
 
 # Architectural verdict
 
-**The current `dhanhq-node` repository is a strong prototype/foundation, but it is not yet a fault-tolerant autonomous options trading platform.**
+**The current `axis-nexus` repository is a strong prototype/foundation, but it is not yet a fault-tolerant autonomous options trading platform.**
 
 I would rate it approximately:
 
@@ -2766,7 +2766,7 @@ and the web and trading processes communicate through shared PostgreSQL/Redis ra
 
 Its `TradingDaemon` is explicitly designed so the trading runtime can be restarted independently of Puma, with a supervisor managing service lifecycle and health checks.
 
-## What is overloaded in `dhanhq-node`
+## What is overloaded in `axis-nexus`
 
 Right now `startCore()` brings essentially everything into one Node process:
 

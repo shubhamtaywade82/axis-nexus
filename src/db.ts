@@ -64,7 +64,7 @@ const log = moduleLogger('db');
  * PR; this TOC makes the structure navigable in the meantime.
  */
 
-const connectionString = process.env.DATABASE_URL || 'postgres://nemesis@localhost:5432/dhanhq_node_development';
+const connectionString = process.env.DATABASE_URL || 'postgres://nemesis@localhost:5432/axis_nexus_development';
 
 export const pool = new Pool({
   connectionString,

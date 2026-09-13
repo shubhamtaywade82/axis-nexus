@@ -1,7 +1,7 @@
 {
-  "name": "algo-scalper-node-sidecar",
+  "name": "axis-nexus",
   "version": "0.4.1",
-  "description": "Node.js Execution Sidecar for DhanHQ v2 using @nemesis-oss/dhanhq-sdk",
+  "description": "Axis Nexus — Autonomous Options Trading System for DhanHQ v2",
   "main": "dist/index.js",
   "engines": {
     "node": ">=20.0.0"

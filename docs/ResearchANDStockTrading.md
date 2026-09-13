@@ -2210,7 +2210,7 @@ And the two SDKs are well aligned with this: `dhanhq-sdk` becomes the **market/t
 
 **One missing input:** the screenshots you provided show the carousel introduction and final slide, but not the actual 10 prompt contents. I can build the architecture above now, but I would **not invent the missing nine prompts**. If you provide the remaining carousel screenshots (or the prompt text), I can map **each exact prompt → concrete Agent Skill → tools → Zod schema → agent workflow → AlgoScalperApi integration point** and turn this into an implementation-ready specification.
 
-Yes. I checked the current `dhanhq-node` repository, and **this is a much better integration target than adding the research-agent layer to the Rails app**.
+Yes. I checked the current `axis-nexus` repository, and **this is a much better integration target than adding the research-agent layer to the Rails app**.
 
 The repo already has almost all of the infrastructure we need: a TypeScript autonomous backend, `@nemesis-oss/dhanhq-sdk`, `@nemesis-oss/ollama-sdk`, an `AgentOrchestrator`, an `AgentToolRegistry`, EventBus telemetry, PostgreSQL persistence, and policy/risk gating.
 
@@ -2274,7 +2274,7 @@ That is especially important because the current SDK registry includes both read
 
 ---
 
-# Why `dhanhq-node` is already well positioned
+# Why `axis-nexus` is already well positioned
 
 Your `package.json` already contains:
 
@@ -2922,6 +2922,6 @@ That will prevent the AI subsystem from becoming one enormous god object.
                        PostgreSQL / UI
 ```
 
-**Yes, this is absolutely implementable in `dhanhq-node`, and the repository is already surprisingly close to the required architecture.** The main work is introducing a clean research domain rather than bolting more logic into the existing trading agent.
+**Yes, this is absolutely implementable in `axis-nexus`, and the repository is already surprisingly close to the required architecture.** The main work is introducing a clean research domain rather than bolting more logic into the existing trading agent.
 
 The next sensible step is to work directly against the repository and implement this as a separate `ResearchOrchestrator` + 10 skill registry + read-only Dhan/Ollama tool layer, with tests and the REST API, rather than just documenting it.

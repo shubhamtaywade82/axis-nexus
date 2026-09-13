@@ -57,7 +57,7 @@ function journalDir(): string {
   if (process.env.JOURNAL_DIR) return process.env.JOURNAL_DIR;
   // Prevent tests from accidentally appending to the runtime journal when JOURNAL_DIR is unset.
   if (process.env.NODE_ENV === 'test') {
-    return join(tmpdir(), 'dhanhq-node-test-journal');
+    return join(tmpdir(), 'axis-nexus-test-journal');
   }
   return join(process.cwd(), '.journal');
 }
