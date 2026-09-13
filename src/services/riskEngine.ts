@@ -132,7 +132,14 @@ export class RiskEngine {
   private scheduleTickEvaluate(): void {
     if (this.tickEvalScheduled) return;
     this.tickEvalScheduled = true;
-    setImmediate(() => {
+    // queueMicrotask, not setImmediate: ticks arrive in the same event-loop
+    // turn and we want the coalesced evaluate() to run BEFORE the next I/O
+    // poll (so a fast burst gets one eval, not N). setImmediate runs in
+    // the check phase AFTER pending I/O — under high tick load that means
+    // we'd evaluate after every I/O batch instead of once per microtask
+    // drain. queueMicrotask is the right primitive for "coalesce within
+    // the current turn."
+    queueMicrotask(() => {
       this.tickEvalScheduled = false;
       void this.evaluate();
     });

@@ -437,7 +437,10 @@ export class AutonomyEngine {
   private scheduleTickMark(): void {
     if (this.tickMarkScheduled || !this.enabled) return;
     this.tickMarkScheduled = true;
-    setImmediate(async () => {
+    // queueMicrotask (see riskEngine.scheduleTickEvaluate for the why):
+    // coalesce a burst of ticks into one markToMarket+snapshot run within
+    // the current event-loop turn, rather than running once per tick.
+    queueMicrotask(async () => {
       this.tickMarkScheduled = false;
       try {
         // this.portfolio.markToMarket() already calls markPositionsToMarket()
