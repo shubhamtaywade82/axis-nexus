@@ -19,12 +19,19 @@ import { requestLogger, errorHandler, notFoundHandler } from './lib/requestLogge
 import { attachBusLoggerBridge } from './lib/busLoggerBridge';
 import { clientLogsRoutes } from './routes/clientLogs';
 import { researchRoutes } from './routes/research';
+import { extractBearer, safeTokenCompare } from './lib/authToken';
 
 
 const PORT = Number(process.env.PORT) || 3003;
 const HOST = process.env.CONTROL_PLANE_HOST || '127.0.0.1';
 const ALLOWED_ORIGIN = process.env.CONTROL_PLANE_ORIGIN || 'http://localhost:5175';
 const CONTROL_PLANE_TOKEN = process.env.CONTROL_PLANE_TOKEN || '';
+// In production, the control plane MUST NOT accept the loose
+// `http://(localhost|127.0.0.1):<any-port>` origin allowlist — any local
+// process or webpage could then POST to /api/control/kill. Dev mode keeps
+// the regex for the convenience of running Vite on arbitrary ports.
+const IS_PROD = process.env.NODE_ENV === 'production';
+const isLoopbackHost = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
 const log = moduleLogger('server');
 
 // The autonomous trading server must NEVER crash on an async surprise —
@@ -51,38 +58,67 @@ async function main() {
 
   // 3. HTTP + WS control plane (frontend is an observer/controller only).
   //
-  // Security posture: this is a single-operator localhost control plane, but
-  // "only listens on the laptop" is not a boundary by itself — any webpage
-  // open in the same browser can still have JS issue requests to it. Locking
-  // CORS to the exact known origin blocks that: for JSON POSTs (order
-  // placement, kill switch) the browser preflights and refuses to send the
-  // real request to an origin the server didn't explicitly allow.
+  // Security posture:
+  //   - Loopback (default): CONTROL_PLANE_TOKEN is optional but recommended.
+  //     A warning is logged when unset. CORS still allows the regex
+  //     `http://(localhost|127.0.0.1):<port>` for dev convenience.
+  //   - Non-loopback (HOST != 127.0.0.1, e.g. a Docker `-p 3003:3003`
+  //     publish): CONTROL_PLANE_TOKEN is MANDATORY. Boot aborts without it
+  //     — an unauthenticated order-placement API on a network-reachable
+  //     interface is the single most dangerous misconfiguration for an
+  //     autonomous trading server.
+  //   - Production (NODE_ENV=production): CORS uses exact-origin matching
+  //     only; the localhost:port regex is dropped. A published Docker image
+  //     is not a single-laptop dev setup and must not be treated as one.
   //
-  // A CONTROL_PLANE_TOKEN bearer check is available but NOT enforced unless
-  // set — the current frontend sends no auth header, so making it mandatory
-  // here would lock the operator out of their own running system. Set it and
-  // wire the frontend to send it when ready to close this residual gap.
+  // Token comparison is constant-time (lib/authToken.ts) — a plain `!==`
+  // short-circuits on the first differing byte and leaks the secret's
+  // prefix length through response-time side channels.
+  if (!isLoopbackHost && !CONTROL_PLANE_TOKEN) {
+    throw new Error(
+      'CONTROL_PLANE_TOKEN is required when CONTROL_PLANE_HOST is not loopback — ' +
+      'an unauthenticated control plane must never bind to a network interface. ' +
+      'Set CONTROL_PLANE_TOKEN or bind to 127.0.0.1.',
+    );
+  }
   if (!CONTROL_PLANE_TOKEN) {
     log.warn('CONTROL_PLANE_TOKEN not set — order/kill-switch endpoints are unauthenticated (CORS-origin-restricted only). Set it to require a bearer token.');
+  } else {
+    log.info({ loopback: isLoopbackHost, production: IS_PROD }, 'Control-plane token authentication enabled');
   }
+
   const app = express();
   const allowedOrigins = [ALLOWED_ORIGIN, 'http://localhost:5175', 'http://127.0.0.1:5175', 'http://localhost:5173', 'http://127.0.0.1:5173'];
   app.use(cors({
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+      // No Origin header = same-origin or non-browser client (curl, the
+      // SDK) — always allow. Browsers always send Origin on cross-site
+      // requests; the absence is a permit for tooling, not a hole.
+      if (!origin) { cb(null, true); return; }
+      if (allowedOrigins.includes(origin)) { cb(null, true); return; }
+      // Dev-only convenience: any localhost port. Dropped in production
+      // so a hosted image can't be reached by an arbitrary local process.
+      if (!IS_PROD && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
         cb(null, true);
-      } else {
-        cb(new Error(`Origin ${origin} not allowed by CORS`));
+        return;
       }
+      cb(new Error(`Origin ${origin} not allowed by CORS`));
     },
     credentials: true,
   }));
-  app.use(express.json());
+  // Explicit body-size cap: protects against memory pressure from large
+  // malformed payloads. 1 MiB is generous for the JSON the control plane
+  // actually receives (largest legit payload is a multi-leg strategy deploy
+  // at a few KB); default Express limit (~100 KB) was too tight for some
+  // options-chain responses on the read paths.
+  app.use(express.json({ limit: '1mb' }));
   app.use(requestLogger); // access logs + req.log child (requestId/traceId)
   app.use((req, res, next) => {
     if (!CONTROL_PLANE_TOKEN || req.path === '/api/health') return next();
-    const presented = req.get('authorization')?.replace(/^Bearer\s+/i, '');
-    if (presented !== CONTROL_PLANE_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+    const presented = extractBearer(req.get('authorization'));
+    if (!presented || !safeTokenCompare(presented, CONTROL_PLANE_TOKEN)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
     next();
   });
 
@@ -117,11 +153,16 @@ async function main() {
   const wss = new WebSocketServer({
     server,
     path: '/ws',
-    // Same optional-token posture as the HTTP layer — only enforced if set.
+    // Same token posture as the HTTP layer — enforced when set, with the
+    // same constant-time comparison. The browser can't set Authorization
+    // headers on a WebSocket handshake, so the token is passed as a
+    // `?token=` query param (over wss:// in production; localhost-only in
+    // dev is acceptable).
     verifyClient: CONTROL_PLANE_TOKEN
       ? (info, cb) => {
           const url = new URL(info.req.url || '/ws', 'http://internal');
-          cb(url.searchParams.get('token') === CONTROL_PLANE_TOKEN);
+          const presented = url.searchParams.get('token');
+          cb(Boolean(presented) && safeTokenCompare(presented, CONTROL_PLANE_TOKEN));
         }
       : undefined,
   });
