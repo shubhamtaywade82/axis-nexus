@@ -12,6 +12,11 @@ import { getSystemState, setSystemState } from '../services/systemState';
 import { listAlerts, pushAlert } from '../db';
 import { evaluateStrategyBacktest } from '../services/strategyConstructor';
 import { analyzeOptionsBehavior } from './market';
+import {
+  AgentRunSchema, AlertTestSchema, AutonomyToggleSchema, KillSwitchSchema,
+  LongOptionPolicySchema, RiskLimitsPatchSchema, ScannerToggleSchema, SquareOffSchema,
+  zodError,
+} from '../lib/routeSchemas';
 
 /**
  * Control-plane routes.
@@ -55,10 +60,11 @@ export function controlRoutes(
   // ── kill switch ─────────────────────────────────────────────────────
   router.post('/kill', async (req, res) => {
     try {
-      const { reason, confirm } = req.body || {};
-      if (confirm !== 'CONFIRM') {
-        return res.status(400).json({ error: 'Send {"confirm":"CONFIRM"} to arm the kill switch' });
+      const parsed = KillSwitchSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
       }
+      const { reason } = parsed.data;
       const result = await risk.armKillSwitch(reason || 'Manual kill switch from control plane');
       journal.append('control_command', { route: 'POST /kill', reason, result });
       res.json(result);
@@ -79,17 +85,25 @@ export function controlRoutes(
 
   // ── autonomy ────────────────────────────────────────────────────────
   router.post('/autonomy', async (req, res) => {
-    const { enabled } = req.body || {};
-    autonomy.setEnabled(!!enabled);
+    const parsed = AutonomyToggleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: zodError(parsed.error) });
+    }
+    const { enabled } = parsed.data;
+    autonomy.setEnabled(enabled);
     await pushAlert('INFO', 'control_plane', `Autonomy engine ${enabled ? 'resumed' : 'paused'} via control plane`);
-    journal.append('control_command', { route: 'POST /autonomy', enabled: !!enabled });
+    journal.append('control_command', { route: 'POST /autonomy', enabled });
     res.json({ status: 'ok', enabled: autonomy.isEnabled(), stats: autonomy.stats() });
   });
 
   router.post('/scanner', (req, res) => {
-    const { enabled } = req.body || {};
-    autonomy.setScanEnabled(!!enabled);
-    journal.append('control_command', { route: 'POST /scanner', enabled: !!enabled });
+    const parsed = ScannerToggleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: zodError(parsed.error) });
+    }
+    const { enabled } = parsed.data;
+    autonomy.setScanEnabled(enabled);
+    journal.append('control_command', { route: 'POST /scanner', enabled });
     res.json({ status: 'ok', stats: autonomy.stats() });
   });
 
@@ -115,14 +129,22 @@ export function controlRoutes(
   });
 
   router.post('/long-option-policy', (req, res) => {
-    const { enabled } = req.body || {};
-    autonomy.longOptionManager.setEnabled(!!enabled);
+    const parsed = LongOptionPolicySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: zodError(parsed.error) });
+    }
+    const { enabled } = parsed.data;
+    autonomy.longOptionManager.setEnabled(enabled);
     res.json({ status: 'ok', enabled: autonomy.longOptionManager.isEnabled() });
   });
 
   router.post('/square-off', async (req, res) => {
     try {
-      const reason = req.body?.reason || 'Manual square-off from control plane';
+      const parsed = SquareOffSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
+      }
+      const reason = parsed.data?.reason || 'Manual square-off from control plane';
       const closed = await autonomy.squareOffAll(reason);
       journal.append('control_command', { route: 'POST /square-off', reason, closed });
       res.json({ status: 'ok', closed });
@@ -137,28 +159,26 @@ export function controlRoutes(
   });
 
   router.post('/risk-limits', async (req, res) => {
-    const patch = req.body || {};
-    const clean: any = {};
-    if (patch.dailyLossLimit != null) clean.dailyLossLimit = Math.max(1000, Number(patch.dailyLossLimit));
-    if (patch.maxMarginUtilPct != null) clean.maxMarginUtilPct = Math.min(100, Math.max(10, Number(patch.maxMarginUtilPct)));
-    if (patch.perStrategyLossLimit != null) clean.perStrategyLossLimit = Math.max(500, Number(patch.perStrategyLossLimit));
-    if (patch.maxConsecutiveLosses != null) clean.maxConsecutiveLosses = Math.max(1, Number(patch.maxConsecutiveLosses));
-    if (patch.maxRejectionRatePct != null) clean.maxRejectionRatePct = Math.max(1, Number(patch.maxRejectionRatePct));
-    if (patch.staleTickSec != null) clean.staleTickSec = Math.max(5, Math.min(120, Number(patch.staleTickSec)));
-    const updated = await risk.setLimits(clean);
-    journal.append('control_command', { route: 'POST /risk-limits', patch: clean, updated });
+    const parsed = RiskLimitsPatchSchema.safeParse(req.body);
+    if (!parsed.success || !parsed.data) {
+      return res.status(400).json({ error: parsed.success ? 'empty body' : zodError(parsed.error) });
+    }
+    const patch = parsed.data;
+    const updated = await risk.setLimits(patch);
+    journal.append('control_command', { route: 'POST /risk-limits', patch, updated });
     res.json(updated);
   });
 
   // ── agent ───────────────────────────────────────────────────────────
   router.post('/agent/run', async (req, res) => {
     try {
-      const { objective } = req.body || {};
-      if (!objective || typeof objective !== 'string' || objective.trim().length < 4) {
-        return res.status(400).json({ error: 'objective (string, ≥4 chars) required' });
+      const parsed = AgentRunSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
       }
-      const result = await agent.run(objective.trim(), 'control_plane');
-      journal.append('control_command', { route: 'POST /agent/run', objective: objective.trim(), result });
+      const { objective } = parsed.data;
+      const result = await agent.run(objective, 'control_plane');
+      journal.append('control_command', { route: 'POST /agent/run', objective, result });
       res.json(result);
     } catch (e: any) {
       res.status(e.message?.includes('in progress') ? 409 : 500).json({ error: e.message });
@@ -192,9 +212,13 @@ export function controlRoutes(
   });
 
   router.post('/alerts/test', async (req, res) => {
-    const { level, message } = req.body || {};
-    await pushAlert(level || 'INFO', 'control_plane', message || 'Manual test alert');
-    eventBus.emit('alert', { level: level || 'INFO', source: 'control_plane', msg: message || 'Manual test alert' });
+    const parsed = AlertTestSchema.safeParse(req.body);
+    if (!parsed.success || !parsed.data) {
+      return res.status(400).json({ error: parsed.success ? 'empty body' : zodError(parsed.error) });
+    }
+    const { level, message } = parsed.data;
+    await pushAlert(level, 'control_plane', message);
+    eventBus.emit('alert', { level, source: 'control_plane', msg: message });
     res.json({ status: 'ok' });
   });
 
