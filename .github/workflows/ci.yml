@@ -33,6 +33,15 @@ jobs:
       - name: Tests (Jest)
         run: npm test
 
+      # Coverage gate — fails the build if global coverage drops below
+      # the thresholds in package.json's test:coverage script. Thresholds
+      # are set just below the current coverage (60% stmt / 43% branch /
+      # 60% fn / 63% line as of this commit) so any future regression trips
+      # CI but the current state passes. Ratchet these up as coverage
+      # improves — never lower them.
+      - name: Coverage threshold
+        run: npm run test:coverage
+
       # Lint the backend with the same oxlint toolchain the frontend uses —
       # surfaces `any`-cast patterns, unused imports, and missing deps that
       # tsc --noEmit silently allows. Warnings don't fail CI today (the
