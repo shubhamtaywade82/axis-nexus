@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend — typecheck + tests
+    name: Backend — typecheck + tests + lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +32,26 @@ jobs:
       # DhanHQ credentials required (db/redis degrade gracefully in tests).
       - name: Tests (Jest)
         run: npm test
+
+      # Coverage gate — fails the build if global coverage drops below
+      # the thresholds in package.json's test:coverage script. Thresholds
+      # are set just below the current coverage (60% stmt / 43% branch /
+      # 60% fn / 63% line as of this commit) so any future regression trips
+      # CI but the current state passes. Ratchet these up as coverage
+      # improves — never lower them.
+      - name: Coverage threshold
+        run: npm run test:coverage
+
+      # Lint the backend with the same oxlint toolchain the frontend uses —
+      # surfaces `any`-cast patterns, unused imports, and missing deps that
+      # tsc --noEmit silently allows. Warnings don't fail CI today (the
+      # codebase has ~15 pre-existing low-severity ones); flip to
+      # `--deny-warnings` once those are cleaned up.
+      - name: Lint backend (oxlint)
+        run: npx --yes oxlint@latest src
+
+      - name: Enforce engines field
+        run: node -e "const p=require('./package.json'); if(!p.engines||!p.engines.node) { console.error('package.json must declare engines.node'); process.exit(1); }"
 
   frontend:
     name: Frontend — lint + build

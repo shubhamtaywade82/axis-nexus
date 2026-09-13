@@ -165,7 +165,7 @@ production, `pino-pretty` in development.
 
 ```jsonc
 // backend access log (one request, correlated end-to-end)
-{"level":30,"time":"2026-08-29T05:20:49.098Z","service":"dhanhq-node","env":"production",
+{"level":30,"time":"2026-08-29T05:20:49.098Z","service":"axis-nexus","env":"production",
  "req":{"id":"test-req-abc12345","method":"POST","url":"/api/control/kill"},
  "responseTime":3,"msg":"POST /api/control/kill → 200"}
 

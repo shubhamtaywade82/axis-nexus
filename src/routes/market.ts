@@ -5,6 +5,10 @@ import { getOptionsAnalysisCache, saveOptionsAnalysisCache } from '../db';
 import { eventBus } from '../services/eventBus';
 import { analyzeOptionChain, toChainRowView } from '../services/optionsAnalytics';
 import { warmLotSizeCache, resolveNearestExpiry } from '../services/strategyConstructor';
+import {
+  GreeksQuerySchema, OptionChainQuerySchema, OptionsAnalysisQuerySchema, QuoteQuerySchema,
+  zodError,
+} from '../lib/routeSchemas';
 
 /**
  * Market data routes — every response is sourced from live DhanHQ data.
@@ -30,7 +34,11 @@ export function marketRoutes(client: DhanClient, market: MarketDataService): Rou
   router.get('/option-chain/:symbol', async (req, res) => {
     try {
       const symbol = (req.params.symbol || 'NIFTY').toUpperCase();
-      const expiry = (req.query.expiry as string) || await resolveNearestExpiry(client, symbol);
+      const qParsed = OptionChainQuerySchema.safeParse(req.query);
+      if (!qParsed.success) {
+        return res.status(400).json({ error: zodError(qParsed.error) });
+      }
+      const expiry = qParsed.data.expiry || await resolveNearestExpiry(client, symbol);
       const chain = await (client as any).optionChain.fetchNormalized({
         underlyingScrip: Number(securityIdFor(symbol)),
         underlyingSeg: 'IDX_I',
@@ -64,7 +72,11 @@ export function marketRoutes(client: DhanClient, market: MarketDataService): Rou
   router.get('/quote/:securityId', async (req, res) => {
     try {
       const { securityId } = req.params;
-      const exchange = (req.query.exchange as string) || 'NSE_FNO';
+      const qParsed = QuoteQuerySchema.safeParse(req.query);
+      if (!qParsed.success) {
+        return res.status(400).json({ error: zodError(qParsed.error) });
+      }
+      const exchange = qParsed.data.exchange;
       // Serve from the live tick cache when fresh, else hit DhanHQ REST.
       const cached = market.getQuote(securityId);
       if (cached && Date.now() - cached.updatedAt < 5000) {
@@ -79,8 +91,12 @@ export function marketRoutes(client: DhanClient, market: MarketDataService): Rou
 
   router.get('/greeks', async (req, res) => {
     try {
-      const symbol = ((req.query.symbol as string) || 'NIFTY').toUpperCase();
-      const expiry = (req.query.expiry as string) || await resolveNearestExpiry(client, symbol);
+      const qParsed = GreeksQuerySchema.safeParse(req.query);
+      if (!qParsed.success) {
+        return res.status(400).json({ error: zodError(qParsed.error) });
+      }
+      const symbol = qParsed.data.symbol.toUpperCase();
+      const expiry = qParsed.data.expiry || await resolveNearestExpiry(client, symbol);
       const chain = await (client as any).optionChain.fetchNormalized({
         underlyingScrip: Number(securityIdFor(symbol)),
         underlyingSeg: 'IDX_I',
@@ -88,7 +104,7 @@ export function marketRoutes(client: DhanClient, market: MarketDataService): Rou
       });
       const rows = Array.isArray(chain) ? chain : chain?.strikes || chain?.data || [];
       const spotSnap = market.getQuote(securityIdFor(symbol));
-      const spot = spotSnap?.ltp || Number(req.query.spot) || 0;
+      const spot = spotSnap?.ltp || qParsed.data.spot || 0;
       if (!spot) return res.status(502).json({ error: 'Underlying spot unavailable — cannot compute Greeks' });
 
       const strikes = rows.slice(0, 35).map((r: any) => {
@@ -131,13 +147,14 @@ export function marketRoutes(client: DhanClient, market: MarketDataService): Rou
 
   router.get('/options-analysis', async (req, res) => {
     try {
-      const symbol = ((req.query.symbol as string) || 'NIFTY').toUpperCase();
+      const qParsed = OptionsAnalysisQuerySchema.safeParse(req.query);
+      if (!qParsed.success) {
+        return res.status(400).json({ error: zodError(qParsed.error) });
+      }
+      const { symbol, days, interval, expiryFlag, expiryCode } = qParsed.data;
       res.json(await analyzeOptionsBehavior(client, {
-        symbol, securityId: securityIdFor(symbol),
-        daysCount: Math.min(10, Math.max(1, Number(req.query.days) || 5)),
-        interval: (req.query.interval as string) || '1',
-        expiryFlag: (req.query.expiryFlag as string) || 'WEEK',
-        expiryCode: Number(req.query.expiryCode) || 1,
+        symbol: symbol.toUpperCase(), securityId: securityIdFor(symbol),
+        daysCount: days, interval, expiryFlag, expiryCode,
       }));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

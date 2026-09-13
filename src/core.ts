@@ -22,6 +22,8 @@ import { getTradingMode, isLiveMode, isSandboxMode, describeModeContract } from 
 import { ResearchOrchestrator } from './services/research/researchOrchestrator';
 import { ResearchScheduler } from './services/research/researchScheduler';
 import { initResearchRepository } from './services/research/researchRepository';
+import { ScalpPositionManager } from './services/scalpPositionManager';
+import { ScalpScanner } from './services/scalpScanner';
 
 /**
  * Core bootstrap — the autonomous trading stack, shared by every entry
@@ -43,6 +45,8 @@ export interface Core {
   sandbox?: SandboxExecutionEngine;
   tracker: OrderTracker;
   selfHealing: SelfHealingService;
+  scalp: ScalpPositionManager;
+  scalpScanner?: ScalpScanner;
 }
 
 export type ExecutionEngine = PaperExecutionEngine | LiveExecutionEngine | SandboxExecutionEngine;
@@ -161,6 +165,21 @@ export async function startCore(): Promise<Core> {
   selfHealing.start();
   startTelegramNotifier();
 
+  // Scalp position manager — fee-aware both-side ratchet exit policy.
+  // Disabled by default (SCALP_ENABLED=true to enable at boot). Emits
+  // real-time state on the 'scalp' EventBus channel for the frontend.
+  const scalp = new ScalpPositionManager(market, portfolio);
+  if (process.env.SCALP_ENABLED === 'true') {
+    scalp.start();
+  }
+  // Scalp entry scanner — finds momentum setups that pass fee-aware
+  // entry gates and registers them with the scalp manager. Same lifecycle
+  // as the scalp manager (requires SCALP_ENABLED=true).
+  const scalpScanner = process.env.SCALP_ENABLED === 'true'
+    ? new ScalpScanner(client, market, executionEngine, risk, scalp)
+    : undefined;
+  if (scalpScanner) autonomy.setScalpScanner(scalpScanner);
+
   // The holiday table is hand-maintained per calendar year (see holidays.ts)
   // — running into an uncovered year would silently treat every day as
   // tradeable again, which is exactly the bug this table exists to close.
@@ -199,7 +218,7 @@ export async function startCore(): Promise<Core> {
   eventBus.emit('system', { type: 'boot', mode });
   eventBus.log('SYSTEM', `Core stack online (mode=${mode}: ${describeModeContract()}) — backend is autonomous; frontend optional`, 'core');
 
-  return { client, sandboxClient, portfolio, market, risk, autonomy, agent, research, researchScheduler, paper, live, sandbox, tracker, selfHealing };
+  return { client, sandboxClient, portfolio, market, risk, autonomy, agent, research, researchScheduler, paper, live, sandbox, tracker, selfHealing, scalp, scalpScanner };
 }
 
 /**

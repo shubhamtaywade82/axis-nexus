@@ -51,3 +51,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Vulnerability scan on the just-pushed image. Fails the workflow on
+      # HIGH or CRITICAL findings — the image is still pushed (above) but
+      # the repo gets a red X on the commit, signaling the maintainer to
+      # address the finding before downstream consumers pull :latest.
+      # UNTRIED finding severities (UNKNOWN/LOW/MEDIUM) are reported but
+      # don't fail — that would generate noise on every Node 20 base image
+      # bump. Tune to `--severity HIGH,CRITICAL` to be stricter.
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+        if: always()

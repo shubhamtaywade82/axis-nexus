@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+# Husky pre-commit hook — fast checks on staged files only.
+#
+# Runs two layers, fastest first, aborts on first failure:
+#   1. lint-staged → oxlint on staged .ts files (sub-second)
+#   2. tsc --noEmit on the whole project (~3s — type errors anywhere
+#      block the commit, not just in staged files, because a change in
+#      file A can break types in file B that the author didn't touch)
+#
+# Deliberately does NOT run jest (10s+) — that's what CI is for. A failed
+# type check or lint is a 5-second feedback loop; a failed test is a
+# 15-second one. The extra friction isn't worth it on every commit.
+#
+# To bypass for a WIP commit: `git commit --no-verify`
+
+npx lint-staged --quiet || exit 1
+
+npx tsc --noEmit || {
+  echo "❌ tsc --noEmit failed — fix type errors before committing"
+  exit 1
+}
+
+echo "✓ pre-commit checks passed"
+

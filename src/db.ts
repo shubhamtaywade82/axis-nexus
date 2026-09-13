@@ -21,13 +21,57 @@ const log = moduleLogger('db');
  * boot and updated from the same computed result as every Postgres write, so
  * it never drifts. In fully offline mode (Postgres unreachable) `mem` is also
  * the only copy, exposed via `dbMode()` and reported by /api/health.
+ *
+ * ── File structure (for future gradual split into db/*.ts) ──────────────
+ *
+ *   Section                  Lines    Exports
+ *   ──────────────────────── ──────── ──────────────────────────────────
+ *   Schema + init            1–197    pool, dbMode, mem, SCHEMA_SQL,
+ *                                     initDatabase, warmMemCache
+ *   Alerts                   198–227  pushAlert, listAlerts, mapAlertRow
+ *   Self-healing patterns    228–288  recordErrorPattern, listErrorPatterns,
+ *                                     ruleExistsForPattern, promoteRule,
+ *                                     getActiveRules
+ *   Agent events             289–322  pushAgentEvent, listAgentEvents,
+ *                                     mapAgentEventRow
+ *   Risk state               323–358  getRiskState, saveRiskState
+ *   Options analysis cache   359–385  getOptionsAnalysisCache,
+ *                                     saveOptionsAnalysisCache
+ *   Strategies               386–543  listPaperStrategies,
+ *                                     createPaperStrategy,
+ *                                     updatePaperStrategyStatus,
+ *                                     closeParentStrategyIfFlat,
+ *                                     deletePaperStrategy
+ *   Wallet                   544–625  getPaperWallet, adjustWalletMargin,
+ *                                     resetPaperWallet
+ *   Orders + positions       626–1022 listPaperOrders, getTodayOrderStats,
+ *                                     calculateOrderCharges,
+ *                                     executePaperOrder, closePaperPosition,
+ *                                     markPositionsToMarket,
+ *                                     listPaperPositions,
+ *                                     closeAllPaperPositions
+ *   Ledger reconciliation    1023–1181 reconcileLedger,
+ *                                     correctLedgerFromPostgres,
+ *                                     findMissingOrders
+ *   Research                 1182–end saveResearchRun, getResearchRun,
+ *                                     listResearchRuns,
+ *                                     saveResearchEvidence,
+ *                                     getResearchEvidenceByRun
+ *
+ * All sections share the `mem` cache object and the `mode` variable —
+ * splitting into per-domain modules requires moving those into a
+ * `db/core.ts` that everything imports. Deferred to a dedicated refactor
+ * PR; this TOC makes the structure navigable in the meantime.
  */
 
-const connectionString = process.env.DATABASE_URL || 'postgres://nemesis@localhost:5432/dhanhq_node_development';
+const connectionString = process.env.DATABASE_URL || 'postgres://nemesis@localhost:5432/axis_nexus_development';
 
 export const pool = new Pool({
   connectionString,
-  max: 10,
+  // Tunable: autonomy/risk/ledger reads can saturate a small pool in broker
+  // mode under fast markets. Default 10 for paper (matches prior behavior);
+  // raise via PG_POOL_MAX for live/broker deployments.
+  max: Number(process.env.PG_POOL_MAX) || 10,
   idleTimeoutMillis: 30000,
 });
 

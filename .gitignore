@@ -8,3 +8,4 @@ logs/
 .cache/
 .journal/
 data/
+coverage/

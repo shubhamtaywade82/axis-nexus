@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "lint": "oxlint --ignore-pattern 'tests/**'",
+    "preview": "vite preview",
+    "test:e2e": "node tests/smoke-kill-switch.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

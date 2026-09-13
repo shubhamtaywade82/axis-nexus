@@ -1,12 +1,12 @@
-# Architecture Review & Implementation Roadmap: dhanhq-node Options Trading System
+# Architecture Review & Implementation Roadmap: Axis Nexus Options Trading System
 
 ## Goal Description
 
-Review the 48 architectural recommendations in [`docs/ARCHITECTURE_IMPROVEMENT.md`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/docs/ARCHITECTURE_IMPROVEMENT.md) alongside the two architecture diagrams (`ChatGPT Image Sep 3, 2026, 11_54_05 PM.png` and `ChatGPT Image Sep 3, 2026, 11_54_10 PM.png`).
+Review the 48 architectural recommendations in [`docs/ARCHITECTURE_IMPROVEMENT.md`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/docs/ARCHITECTURE_IMPROVEMENT.md) alongside the two architecture diagrams (`ChatGPT Image Sep 3, 2026, 11_54_05 PM.png` and `ChatGPT Image Sep 3, 2026, 11_54_10 PM.png`).
 
 The objective is to evaluate:
 
-1. **Feasibility**: What is realistic and doable in the current `dhanhq-node` codebase (TypeScript / Node.js / Express / PostgreSQL / Redis).
+1. **Feasibility**: What is realistic and doable in the current `axis-nexus` codebase (TypeScript / Node.js / Express / PostgreSQL / Redis).
 2. **Pragmatism & Guardrails**: What is high-impact vs. what is speculative enterprise over-engineering (violating the [Code Quality Guide](file:///home/nemesis/.ai/CODE_QUALITY.md) KISS/YAGNI principles) for running an autonomous paper-trading engine on a laptop with live DhanHQ REST & WebSocket feeds.
 3. **Execution Plan**: A prioritized, safe, multi-phase roadmap that transforms the prototype into a self-healing, deterministic options trading platform without destabilizing working features.
 
@@ -14,20 +14,20 @@ The objective is to evaluate:
 
 ## Executive Architectural Assessment
 
-The current `dhanhq-node` codebase is already remarkably well-structured compared to a typical trading prototype:
+The current `axis-nexus` codebase is already remarkably well-structured compared to a typical trading prototype:
 
 - **Strengths already present**:
-  - Frontend-independent autonomous core ([`src/core.ts`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/core.ts)).
-  - Unified [`PortfolioSource`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/portfolioSource.ts) abstraction for Paper and Broker accounts.
-  - Active [`RiskEngine`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/riskEngine.ts) with kill-switch, daily loss limits, and position caps.
-  - Live DhanHQ binary WebSocket ingestion with REST polling fallback ([`src/services/marketData.ts`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/marketData.ts)).
-  - Multi-leg strategy construction for 12+ strategies ([`src/services/strategyConstructor.ts`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/strategyConstructor.ts)).
-  - Daily audit journal in NDJSON ([`src/services/journal.ts`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/journal.ts)).
+  - Frontend-independent autonomous core ([`src/core.ts`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/core.ts)).
+  - Unified [`PortfolioSource`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/portfolioSource.ts) abstraction for Paper and Broker accounts.
+  - Active [`RiskEngine`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/riskEngine.ts) with kill-switch, daily loss limits, and position caps.
+  - Live DhanHQ binary WebSocket ingestion with REST polling fallback ([`src/services/marketData.ts`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/marketData.ts)).
+  - Multi-leg strategy construction for 12+ strategies ([`src/services/strategyConstructor.ts`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/strategyConstructor.ts)).
+  - Daily audit journal in NDJSON ([`src/services/journal.ts`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/journal.ts)).
   - 29 test suites passing (213 unit/integration tests).
 
 - **The Core Vulnerabilities**:
   1. **No Order/Strategy State Machine**: Execution is fire-and-forget loops over legs (`for (const leg of strat.legs) await paper.placeOrder(...)`). If Leg 1 fills and Leg 2 rejects, the system holds an unintended naked position with no atomic repair or rollback.
-  2. **AI in the Direct Execution Loop**: [`AgentOrchestrator`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/agent.ts) scans, synthesizes, and directly executes orders. If Ollama stalls for 15 seconds, Node's event loop stutters.
+  2. **AI in the Direct Execution Loop**: [`AgentOrchestrator`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/agent.ts) scans, synthesizes, and directly executes orders. If Ollama stalls for 15 seconds, Node's event loop stutters.
   3. **In-Memory Derived Truth**: `PositionMonitor` and `mem` hold active stops and positions. If the Node process crashes, open stops are lost until `seedExistingPositions` rebuilds them, but unconfirmed in-flight orders are orphaned.
   4. **Optimistic Fill Pricing**: Paper execution fills immediately at `LTP ± fixed tick` without bid/ask spread checks, depth exhaustion, or limit order queues.
 
@@ -88,7 +88,7 @@ The current `dhanhq-node` codebase is already remarkably well-structured compare
 
 #### B. Multi-Leg Strategy Execution & Repair Engine
 
-- **Current problem**: In [`src/services/strategyConstructor.ts`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/strategyConstructor.ts), a 4-leg Iron Condor places legs one by one. If Leg 3 fails, Legs 1 and 2 remain open, exposing the account to unlimited naked risk.
+- **Current problem**: In [`src/services/strategyConstructor.ts`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/strategyConstructor.ts), a 4-leg Iron Condor places legs one by one. If Leg 3 fails, Legs 1 and 2 remain open, exposing the account to unlimited naked risk.
 - **Doable solution**:
   - Implement a `StrategyExecutionCoordinator`:
 
@@ -102,7 +102,7 @@ The current `dhanhq-node` codebase is already remarkably well-structured compare
 
 #### C. Decouple Agentic AI into Advisory Proposals
 
-- **Current problem**: [`src/services/agent.ts`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/agent.ts) holds the execution keys. If Ollama crashes or hallucinates bad legs, bad orders go to the paper engine.
+- **Current problem**: [`src/services/agent.ts`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/agent.ts) holds the execution keys. If Ollama crashes or hallucinates bad legs, bad orders go to the paper engine.
 - **Doable solution**:
   - Introduce `TradeProposal` contract:
 
@@ -149,7 +149,7 @@ The current `dhanhq-node` codebase is already remarkably well-structured compare
 
 #### B. Realistic Paper Fill Model (Bid/Ask & Depth)
 
-- **Current problem**: [`src/engines/paper.ts`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/engines/paper.ts) fills at `LTP ± 0.05`.
+- **Current problem**: [`src/engines/paper.ts`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/engines/paper.ts) fills at `LTP ± 0.05`.
 - **Doable solution**:
   - When quote has market depth / Bid-Ask:
     - Market Buy fills at `Ask` (plus slippage if quantity > top ask size).
@@ -223,14 +223,14 @@ flowchart TD
   1. Create `src/services/orderStateMachine.ts` with explicit states (`CREATED`, `VALIDATED`, `SUBMITTED`, `FILLED`, `REJECTED`, `UNKNOWN`, `CANCELLED`).
   2. Implement `StrategyExecutionCoordinator` in `src/engines/paper.ts` to coordinate multi-leg fills sequentially or concurrently with automatic rollback (flattening filled legs if subsequent legs reject).
   3. Introduce `SystemState` (`BOOTING`, `RECONCILING`, `READY`, `TRADING`, `DEGRADED`, `SAFE_MODE`, `HALTED`).
-  4. Strengthen [`crossCheckJournalOnBoot`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/core.ts#L178-L202) into a true reconciliation engine.
+  4. Strengthen [`crossCheckJournalOnBoot`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/core.ts#L178-L202) into a true reconciliation engine.
 
 ### Phase 2: Decoupled AI & Opportunity Engine (P0/P1)
 
 - **Goal**: Prevent LLM latency or errors from impacting the live trading heartbeat.
 - **Actions**:
   1. Extract deterministic scanners into `src/services/opportunityEngine.ts` (monitors PCR, Supertrend, IV, VWAP).
-  2. Refactor [`AgentOrchestrator`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/agent.ts) to output `TradeProposal` data contracts.
+  2. Refactor [`AgentOrchestrator`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/agent.ts) to output `TradeProposal` data contracts.
   3. Wire proposal intake through `RiskEngine.canTrade()` and `StrategyValidator` before execution.
 
 ### Phase 3: Paper Execution Realism & Quant Greeks (P1)
@@ -238,7 +238,7 @@ flowchart TD
 - **Goal**: Realistic slippage, fill pricing, and accurate portfolio-level risk.
 - **Actions**:
   1. Update `PaperExecutionEngine` to fill Market Buys at Ask, Market Sells at Bid from Dhan quote depth.
-  2. Improve Black-Scholes Greeks calculations in [`src/services/optionsAnalytics.ts`](file:///home/nemesis/project/trading-workspace/bots/dhanhq-node/src/services/optionsAnalytics.ts) to calculate implied volatility from live market prices instead of a hardcoded 15% fallback.
+  2. Improve Black-Scholes Greeks calculations in [`src/services/optionsAnalytics.ts`](file:///home/nemesis/project/trading-workspace/bots/axis-nexus/src/services/optionsAnalytics.ts) to calculate implied volatility from live market prices instead of a hardcoded 15% fallback.
   3. Aggregate Portfolio Greeks (Total Net Delta, Gamma, Theta, Vega) in `RiskEngine`.
 
 ### Phase 4: Process Boundary Separation (P2)

@@ -28,19 +28,42 @@ process.on("unhandledRejection", (e: any) =>
 async function main() {
   log.info({ mode: getTradingMode() }, "Starting DhanHQ-TS Execution Sidecar (headless)");
 
+  let intentSubscriber: Redis | null = null;
   try {
     const core = await startCore();
     // Mirror EventBus telemetry into the structured stdout log — same
     // unified stream as the HTTP server variant.
     attachBusLoggerBridge();
-    await listenForIntents(core);
+    intentSubscriber = await listenForIntents(core);
     log.info("Process ready — autonomous stack running; listening for Rails Redis intents");
   } catch (e) {
     logError(log, "Initialization error", e);
   }
+
+  // Graceful shutdown — the sidecar has no HTTP server to close, but the
+  // Redis subscriber and the autonomous core must still stop cleanly so
+  // in-flight intents aren't orphaned mid-execution and the journal closes
+  // before the process exits. Mirrors server.ts's shutdown() handler.
+  const shutdown = async (signal: string) => {
+    log.info({ signal }, "Sidecar shutdown initiated");
+    try {
+      if (intentSubscriber) {
+        await intentSubscriber.quit().catch(() => {});
+      }
+      // journal.close() schedules a final flush; awaiting it prevents a
+      // race where the process exits before the last entries land on disk.
+      const { journal } = await import("./services/journal");
+      await journal.close();
+    } catch (e: any) {
+      log.warn({ err: { message: e?.message || String(e) } }, "Sidecar shutdown cleanup error");
+    }
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
-async function listenForIntents(core: Core): Promise<void> {
+async function listenForIntents(core: Core): Promise<Redis> {
   const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379/0";
   const intentSubscriber = new Redis(redisUrl, {
     maxRetriesPerRequest: 1,
@@ -67,6 +90,7 @@ async function listenForIntents(core: Core): Promise<void> {
       logError(log, "Execution failed", e);
     }
   });
+  return intentSubscriber;
 }
 
 main();

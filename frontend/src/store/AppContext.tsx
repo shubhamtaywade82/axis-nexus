@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { AppState, ToastType } from './types';
-import { initialAppState } from '../utils/mockData';
+import { initialAppState } from '../utils/initialState';
 import { api } from '../services/api';
 import { useBackendStream, type Envelope } from '../hooks/useBackendStream';
 

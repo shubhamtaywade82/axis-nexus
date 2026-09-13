@@ -39,7 +39,9 @@ export type JournalKind =
   | 'risk_decision'      // a circuit breaker's state transition
   | 'kill'               // kill switch armed/disarmed
   | 'eod'                // EOD/manual square-off
-  | 'control_command';   // an operator action via the control-plane API
+  | 'control_command'    // an operator action via the control-plane API
+  | 'scalp_entry'        // a scalp position was opened
+  | 'scalp_exit';        // a scalp position was closed (with PnL)
 
 export interface JournalEntry<T = any> {
   seq: number;
@@ -57,7 +59,7 @@ function journalDir(): string {
   if (process.env.JOURNAL_DIR) return process.env.JOURNAL_DIR;
   // Prevent tests from accidentally appending to the runtime journal when JOURNAL_DIR is unset.
   if (process.env.NODE_ENV === 'test') {
-    return join(tmpdir(), 'dhanhq-node-test-journal');
+    return join(tmpdir(), 'axis-nexus-test-journal');
   }
   return join(process.cwd(), '.journal');
 }

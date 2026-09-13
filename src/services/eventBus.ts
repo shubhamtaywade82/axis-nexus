@@ -21,7 +21,8 @@ export type Channel =
   | 'risk'          // circuit breaker / risk state snapshots
   | 'portfolio'     // positions / orders / funds snapshots
   | 'order'         // fills, rejections, cancellations
-  | 'system';       // lifecycle: boot, mode changes, kill switch
+  | 'system'        // lifecycle: boot, mode changes, kill switch
+  | 'scalp';        // scalp position state: ratchet levels, entry/exit, PnL
 
 export interface Envelope<T = any> {
   channel: Channel;
@@ -48,6 +49,7 @@ const HISTORY_LIMITS: Record<Channel, number> = {
   portfolio: 50,
   order: 500,
   system: 200,
+  scalp: 200,
 };
 
 const ALL_CHANNELS = Object.keys(HISTORY_LIMITS) as Channel[];
@@ -59,7 +61,7 @@ export class EventBus {
   private wsClients = new Set<(env: Envelope) => void>();
   private redisSink: ((channel: string, message: string) => Promise<void>) | null = null;
   private historyByChannel: Record<Channel, HistoryEntry[]> = {
-    tick: [], log: [], alert: [], telemetry: [], risk: [], portfolio: [], order: [], system: [],
+    tick: [], log: [], alert: [], telemetry: [], risk: [], portfolio: [], order: [], system: [], scalp: [],
   };
   // Tie-breaker for recent()'s merge sort — Date.now() has 1ms resolution,
   // and two envelopes on different channels emitted in the same event-loop

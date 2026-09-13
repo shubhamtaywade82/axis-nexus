@@ -19,15 +19,12 @@ import { buildMarginReconcileReport, buildPaperMarginReconcileReport } from '../
 import { brokerJournalMode, executionBrokerClient, isPaperMode } from '../lib/tradingMode';
 import { marketClock } from '../services/marketHours';
 import { journal, type JournalEntry } from '../services/journal';
+import {
+  ClosePositionSchema, PaperOrderSchema, StrategyCloseSchema, StrategyDeploySchema,
+  StrategyStatusSchema, WalletResetSchema, zodError,
+} from '../lib/routeSchemas';
 
 const log = moduleLogger('portfolio');
-
-function parseInstrumentKey(body: { securityId?: string; exchangeSegment?: string }): InstrumentKey {
-  if (!body.securityId || !body.exchangeSegment) {
-    throw new Error('securityId and exchangeSegment are required');
-  }
-  return { securityId: String(body.securityId), exchangeSegment: String(body.exchangeSegment) };
-}
 
 async function findPositionByKey(key: InstrumentKey, portfolio?: PortfolioSource, tradingSymbol?: string) {
   const positions = portfolio ? await portfolio.getPositions() : await listPaperPositions();
@@ -266,13 +263,11 @@ export function portfolioRoutes(
       if (!isPaperMode()) {
         return res.status(400).json({ error: 'Manual paper orders are only available when TRADING_MODE=paper' });
       }
-      const { symbol, quantity, transactionType, price, orderType, productType, securityId, exchangeSegment } = req.body;
-      if (!symbol || !quantity || !transactionType) {
-        return res.status(400).json({ error: 'symbol, quantity, and transactionType are required' });
+      const parsed = PaperOrderSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
       }
-      if (!Number.isFinite(Number(quantity)) || Number(quantity) <= 0 || !Number.isInteger(Number(quantity))) {
-        return res.status(400).json({ error: 'quantity must be a positive integer' });
-      }
+      const { symbol, quantity, transactionType, price, orderType, productType, securityId, exchangeSegment } = parsed.data;
       if (!paper) {
         return res.status(503).json({ error: 'Paper execution engine not available' });
       }
@@ -284,20 +279,20 @@ export function portfolioRoutes(
         correlation_id: `manual_${Date.now().toString(36)}`,
         intent_id: 'manual_order',
         params: {
-          security_id: securityId || '0',
+          security_id: securityId,
           symbol,
-          quantity: Number(quantity),
+          quantity,
           transaction_type: transactionType,
-          order_type: orderType || 'MARKET',
-          exchange_segment: exchangeSegment || 'NSE_FNO',
-          product_type: productType || 'INTRADAY',
-          price: Number(price || 0),
+          order_type: orderType,
+          exchange_segment: exchangeSegment,
+          product_type: productType,
+          price,
         },
       });
       if (result.status === 'REJECTED') {
         return res.status(422).json({ error: result.reason });
       }
-      eventBus.emit('order', { kind: 'fill', is_paper: true, symbol: String(symbol).toUpperCase(), fillPrice: result.fill_price, quantity: Number(quantity), correlationId: result.correlation_id, source: 'manual' });
+      eventBus.emit('order', { kind: 'fill', is_paper: true, symbol: String(symbol).toUpperCase(), fillPrice: result.fill_price, quantity, correlationId: result.correlation_id, source: 'manual' });
       res.json(result);
     } catch (e: any) {
       res.status(422).json({ error: e.message });
@@ -309,8 +304,12 @@ export function portfolioRoutes(
       if (isLocalPaper()) {
         return res.status(400).json({ error: 'Broker close is not available in paper mode — use /paper/positions/close' });
       }
-      const key = parseInstrumentKey(req.body);
-      const { ltp, tradingSymbol } = req.body;
+      const parsed = ClosePositionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
+      }
+      const key = toInstrumentKey(parsed.data);
+      const { ltp, tradingSymbol } = parsed.data;
       const pos = await findPositionByKey(key, portfolio, tradingSymbol);
       const effectiveKey = pos ? toInstrumentKey(pos) : key;
       const liveLtp = pos ? market.getLtp(String(pos.securityId)) : null;
@@ -338,8 +337,12 @@ export function portfolioRoutes(
 
   router.post('/paper/positions/close', async (req, res) => {
     try {
-      const key = parseInstrumentKey(req.body);
-      const { ltp, tradingSymbol } = req.body;
+      const parsed = ClosePositionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
+      }
+      const key = toInstrumentKey(parsed.data);
+      const { ltp, tradingSymbol } = parsed.data;
       const pos = await findPositionByKey(key, !isLocalPaper() && portfolio ? portfolio : undefined, tradingSymbol);
       const effectiveKey = pos ? toInstrumentKey(pos) : key;
       if (!isLocalPaper() && portfolio) {
@@ -363,7 +366,11 @@ export function portfolioRoutes(
 
   router.post('/paper/wallet/reset', async (req, res) => {
     try {
-      const initialBalance = req.body.initialBalance ? Number(req.body.initialBalance) : 100000;
+      const parsed = WalletResetSchema.safeParse(req.body);
+      if (!parsed.success || !parsed.data) {
+        return res.status(400).json({ error: parsed.success ? 'empty body' : zodError(parsed.error) });
+      }
+      const { initialBalance } = parsed.data;
       const result = await resetPaperWallet(initialBalance);
       eventBus.log('WARN', `Paper wallet reset to ₹${initialBalance.toLocaleString('en-IN')} (positions cleared)`, 'wallet_admin');
       res.json(result);
@@ -404,7 +411,11 @@ export function portfolioRoutes(
       if (!isPaperMode()) {
         return res.status(400).json({ error: 'Paper strategy deploy is only available when TRADING_MODE=paper' });
       }
-      const { name, symbol, type, lots, legs } = req.body;
+      const parsed = StrategyDeploySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
+      }
+      const { name, symbol, type, lots, legs } = parsed.data;
       // Strategy deployment is blocked by the kill switch / EOD window too.
       const gate = risk?.canTrade();
       if (gate && !gate.allowed) {
@@ -531,7 +542,11 @@ export function portfolioRoutes(
 
   router.post('/paper/strategy/status', async (req, res) => {
     try {
-      const { id, status } = req.body;
+      const parsed = StrategyStatusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
+      }
+      const { id, status } = parsed.data;
       await updatePaperStrategyStatus(id, status);
       res.json({ status: 'ok', id, newStatus: status });
     } catch (e: any) {
@@ -541,7 +556,11 @@ export function portfolioRoutes(
 
   router.post('/paper/strategy/execute', async (req, res) => {
     try {
-      const { id } = req.body;
+      const parsed = StrategyCloseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
+      }
+      const { id } = parsed.data;
       const strategies = await listPaperStrategies();
       const strat = strategies.find((s) => s.id === id);
       if (!strat) return res.status(404).json({ error: 'Strategy not found' });
@@ -592,7 +611,11 @@ export function portfolioRoutes(
 
   router.post('/paper/strategy/close', async (req, res) => {
     try {
-      const { id } = req.body;
+      const parsed = StrategyCloseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: zodError(parsed.error) });
+      }
+      const { id } = parsed.data;
       const strategies = await listPaperStrategies();
       const strat = strategies.find((s) => s.id === id);
       if (strat) {

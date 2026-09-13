@@ -38,7 +38,7 @@ const logFile = path.join(LOG_DIR, `${new Date().toISOString().slice(0, 10)}.jso
 const options: LoggerOptions = {
   level: process.env.LOG_LEVEL ?? 'info',
   base: {
-    service: process.env.SERVICE_NAME ?? 'dhanhq-node',
+    service: process.env.SERVICE_NAME ?? 'axis-nexus',
     env: process.env.NODE_ENV ?? 'development',
     version: process.env.GIT_SHA ?? process.env.APP_VERSION ?? 'dev',
     mode: getTradingMode(),

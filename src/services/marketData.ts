@@ -60,6 +60,24 @@ export interface QuoteSnapshot {
   volume: number;
   oi: number;
   updatedAt: number;
+  /** Bid-ask spread — populated when the DhanHQ WS sends full depth.
+   *  Zero/undefined when only LTP is available (REST fallback). */
+  bid?: number;
+  ask?: number;
+  bidQty?: number;
+  askQty?: number;
+}
+
+/** Returns the current bid-ask spread for an instrument, or null if
+ *  no depth data is available (REST fallback mode). The scalp exit
+ *  policy uses this to calculate the true cost of entry/exit. */
+export function getBidAsk(market: MarketDataService, securityId: string): { bid: number; ask: number; spread: number; spreadPct: number } | null {
+  const q = market.getQuote(securityId);
+  if (!q || !q.bid || !q.ask || q.bid <= 0 || q.ask <= 0) return null;
+  const spread = q.ask - q.bid;
+  const mid = (q.bid + q.ask) / 2;
+  const spreadPct = mid > 0 ? (spread / mid) * 100 : 0;
+  return { bid: q.bid, ask: q.ask, spread, spreadPct };
 }
 
 /**
@@ -496,6 +514,14 @@ export class MarketDataService {
     const ltp = Number(tick.ltp ?? tick.lastTradedPrice ?? prev?.ltp ?? 0);
     if (!ltp) return;
     const prevClose = Number(tick.close ?? prev?.prevClose ?? ltp);
+    // Bid/ask — DhanHQ's binary WS sends these as top-of-book fields on
+    // full-mode tick packets. The field names vary by SDK version, so
+    // check all known shapes. When absent (light-mode subscription or
+    // REST fallback), preserve the previous bid/ask rather than zeroing.
+    const bid = Number(tick.bid ?? tick.bestBid ?? tick.bidPrice ?? prev?.bid ?? 0) || prev?.bid;
+    const ask = Number(tick.ask ?? tick.bestAsk ?? tick.askPrice ?? prev?.ask ?? 0) || prev?.ask;
+    const bidQty = Number(tick.bidQty ?? tick.bestBidQuantity ?? tick.bidQuantity ?? prev?.bidQty ?? 0) || prev?.bidQty;
+    const askQty = Number(tick.askQty ?? tick.bestAskQuantity ?? tick.askQuantity ?? prev?.askQty ?? 0) || prev?.askQty;
     const snap: QuoteSnapshot = {
       securityId: secId,
       symbol,
@@ -509,6 +535,10 @@ export class MarketDataService {
       volume: Number(tick.volume ?? prev?.volume ?? 0),
       oi: Number(tick.oi ?? tick.openInterest ?? prev?.oi ?? 0),
       updatedAt: Date.now(),
+      bid: bid && bid > 0 ? bid : undefined,
+      ask: ask && ask > 0 ? ask : undefined,
+      bidQty: bidQty && bidQty > 0 ? bidQty : undefined,
+      askQty: askQty && askQty > 0 ? askQty : undefined,
     };
     this.quotes.set(secId, snap);
 
@@ -533,6 +563,13 @@ export class MarketDataService {
     const ohlc = d.ohlc || {};
     const prevClose = Number(ohlc.close || d.close || d.prevClose || ltp);
     const prev = this.quotes.get(secId);
+    // REST quote — DhanHQ's marketFeed.quote response includes bid/ask
+    // in the depth object when available.
+    const depth = d.depth || d.marketDepth || {};
+    const topBid = depth.buy?.[0] || depth.bids?.[0] || {};
+    const topAsk = depth.sell?.[0] || depth.asks?.[0] || {};
+    const bid = Number(topBid.price ?? topBid.bidPrice ?? d.bid ?? prev?.bid ?? 0) || prev?.bid;
+    const ask = Number(topAsk.price ?? topAsk.askPrice ?? d.ask ?? prev?.ask ?? 0) || prev?.ask;
     const snap: QuoteSnapshot = {
       securityId: secId,
       symbol,
@@ -546,6 +583,10 @@ export class MarketDataService {
       volume: Number(d.volume || 0),
       oi: Number(d.oi || d.openInterest || 0),
       updatedAt: Date.now(),
+      bid: bid && bid > 0 ? bid : undefined,
+      ask: ask && ask > 0 ? ask : undefined,
+      bidQty: Number(topBid.quantity ?? topBid.qty ?? 0) || undefined,
+      askQty: Number(topAsk.quantity ?? topAsk.qty ?? 0) || undefined,
     };
     this.quotes.set(secId, snap);
 

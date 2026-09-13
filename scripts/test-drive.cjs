@@ -46,7 +46,7 @@ async function main() {
   section('BOOT — autonomous server (paper mode, no frontend)');
   const server = spawn('npx', ['ts-node', 'src/server.ts'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, PORT: String(PORT), NODE_ENV: 'production', LOG_LEVEL: 'info', TRADING_MODE: 'paper', SERVICE_NAME: 'dhanhq-node-testdrive' },
+    env: { ...process.env, PORT: String(PORT), NODE_ENV: 'production', LOG_LEVEL: 'info', TRADING_MODE: 'paper', SERVICE_NAME: 'axis-nexus-testdrive' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const serverLogs = [];

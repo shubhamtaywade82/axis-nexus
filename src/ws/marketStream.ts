@@ -2,6 +2,7 @@ import { WebSocket } from 'ws';
 import { eventBus, type Envelope, type Channel } from '../services/eventBus';
 import { marketClock } from '../services/marketHours';
 import { moduleLogger } from '../lib/logger';
+import { WsClientMessageSchema } from '../lib/routeSchemas';
 
 /**
  * WebSocket hub — the backend→frontend telemetry stream.
@@ -29,13 +30,13 @@ import { moduleLogger } from '../lib/logger';
  *    has fallen behind.
  */
 
-const ALL_CHANNELS: Channel[] = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system'];
+const ALL_CHANNELS: Channel[] = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'];
 // Per-channel hydration depth — each channel gets its OWN bounded slice of
 // history rather than one merged-then-sliced(-60) list, which a bursty
 // channel (ticks) could dominate entirely, starving the others out of the
 // snapshot a late-attaching dashboard needs most (recent logs and alerts).
 const HYDRATION_LIMITS: Partial<Record<Channel, number>> = {
-  tick: 20, portfolio: 5, risk: 5, log: 40, alert: 40, telemetry: 40,
+  tick: 20, portfolio: 5, risk: 5, log: 40, alert: 40, telemetry: 40, scalp: 50,
 };
 
 const TICK_FLUSH_MS = 100; // ~10Hz — well above human perception for a number redrawing
@@ -107,17 +108,36 @@ export class MarketStreamManager {
     }));
 
     ws.on('message', (raw) => {
+      let parsed: unknown;
       try {
-        const msg = JSON.parse(String(raw));
-        if (msg.type === 'subscribe' && Array.isArray(msg.channels)) {
-          entry.channels = new Set<Channel>(msg.channels.filter((c: any) => ALL_CHANNELS.includes(c)));
-          ws.send(JSON.stringify({ channel: 'system', ts: Date.now(), payload: { type: 'subscribed', channels: [...entry.channels] } }));
-        } else if (msg.type === 'unsubscribe') {
-          entry.channels = new Set();
-        } else if (msg.type === 'ping') {
-          ws.send(JSON.stringify({ channel: 'system', ts: Date.now(), payload: { type: 'pong' } }));
-        }
-      } catch { /* malformed — ignore */ }
+        parsed = JSON.parse(String(raw));
+      } catch {
+        // Malformed JSON — send a typed error back so a debugging client
+        // can see why its message was ignored, rather than silent drop.
+        ws.send(JSON.stringify({ channel: 'system', ts: Date.now(), payload: { type: 'error', error: 'invalid JSON' } }));
+        return;
+      }
+      // Validate the message shape with zod — a malformed `channels` array,
+      // an unknown message type, or extra fields all surface as a typed
+      // error envelope rather than silently misbehaving.
+      const result = WsClientMessageSchema.safeParse(parsed);
+      if (!result.success) {
+        const issue = result.error.issues[0];
+        ws.send(JSON.stringify({
+          channel: 'system', ts: Date.now(),
+          payload: { type: 'error', error: issue ? `${issue.path.join('.') || 'msg'}: ${issue.message}` : 'invalid message' },
+        }));
+        return;
+      }
+      const msg = result.data;
+      if (msg.type === 'subscribe') {
+        entry.channels = msg.channels ? new Set<Channel>(msg.channels) : new Set<Channel>(ALL_CHANNELS);
+        ws.send(JSON.stringify({ channel: 'system', ts: Date.now(), payload: { type: 'subscribed', channels: [...entry.channels] } }));
+      } else if (msg.type === 'unsubscribe') {
+        entry.channels = new Set();
+      } else if (msg.type === 'ping') {
+        ws.send(JSON.stringify({ channel: 'system', ts: Date.now(), payload: { type: 'pong' } }));
+      }
     });
   }
 

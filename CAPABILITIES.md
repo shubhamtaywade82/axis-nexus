@@ -142,4 +142,4 @@ market REST. **None of it is required for the system to trade.**
 | Durability (optional) | `DATABASE_URL` (PostgreSQL) |
 | Rails bridge (optional) | `REDIS_URL` |
 | LLM reasoning (optional) | `OLLAMA_BASE_URL` + `OLLAMA_MODEL` |
-| Deploy artifact | Docker image: `ghcr.io/shubhamtaywade82/dhanhq-node:main` (CI-built) |
+| Deploy artifact | Docker image: `ghcr.io/shubhamtaywade82/axis-nexus:main` (CI-built) |
