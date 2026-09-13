@@ -60,6 +60,24 @@ export interface QuoteSnapshot {
   volume: number;
   oi: number;
   updatedAt: number;
+  /** Bid-ask spread — populated when the DhanHQ WS sends full depth.
+   *  Zero/undefined when only LTP is available (REST fallback). */
+  bid?: number;
+  ask?: number;
+  bidQty?: number;
+  askQty?: number;
+}
+
+/** Returns the current bid-ask spread for an instrument, or null if
+ *  no depth data is available (REST fallback mode). The scalp exit
+ *  policy uses this to calculate the true cost of entry/exit. */
+export function getBidAsk(market: MarketDataService, securityId: string): { bid: number; ask: number; spread: number; spreadPct: number } | null {
+  const q = market.getQuote(securityId);
+  if (!q || !q.bid || !q.ask || q.bid <= 0 || q.ask <= 0) return null;
+  const spread = q.ask - q.bid;
+  const mid = (q.bid + q.ask) / 2;
+  const spreadPct = mid > 0 ? (spread / mid) * 100 : 0;
+  return { bid: q.bid, ask: q.ask, spread, spreadPct };
 }
 
 /**

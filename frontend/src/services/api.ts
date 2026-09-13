@@ -97,6 +97,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/** Exported for pages that need custom endpoints (e.g. /api/scalp/*). */
+export { request as apiRequest };
+
 export const api = {
   health: () => request<{ status: string; mode: string; persistence: string; killed: boolean; autonomy: boolean; marketSource: string; uptime: number }>('/api/health'),
 

@@ -139,7 +139,7 @@ export function zodError(err: z.ZodError): string {
 // subscription set to empty with no feedback to the client. Schemas make
 // the protocol explicit and reject unknown shapes with a typed error.
 
-const WS_CHANNELS = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system'] as const;
+const WS_CHANNELS = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'] as const;
 
 export const WsSubscribeSchema = z.object({
   type: z.literal('subscribe'),

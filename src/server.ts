@@ -20,6 +20,7 @@ import { requestLogger, errorHandler, notFoundHandler } from './lib/requestLogge
 import { attachBusLoggerBridge } from './lib/busLoggerBridge';
 import { clientLogsRoutes } from './routes/clientLogs';
 import { researchRoutes } from './routes/research';
+import { scalpRoutes } from './routes/scalp';
 import { extractBearer, safeTokenCompare } from './lib/authToken';
 import { writeLimiter, agentRunLimiter } from './lib/rateLimiters';
 
@@ -179,6 +180,7 @@ async function main() {
   app.use('/api/control', writeLimiter, controlRoutes(core.client, core.risk, core.autonomy, core.agent, core.market, core.sandboxClient));
   app.use('/api/client-logs', clientLogsRoutes());
   app.use('/api/research', researchRoutes(core.research, core.researchScheduler));
+  app.use('/api/scalp', writeLimiter, scalpRoutes(core.scalp));
 
   app.get('/api/health', (_req, res) => {
     res.json({

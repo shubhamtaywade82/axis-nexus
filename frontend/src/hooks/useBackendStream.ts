@@ -13,7 +13,7 @@ import { wsUrlWithToken } from '../services/api';
  * The default URL matches the backend server (port 3003, path /ws).
  */
 
-export type Channel = 'tick' | 'log' | 'alert' | 'telemetry' | 'risk' | 'portfolio' | 'order' | 'system';
+export type Channel = 'tick' | 'log' | 'alert' | 'telemetry' | 'risk' | 'portfolio' | 'order' | 'system' | 'scalp';
 
 export interface Envelope {
   channel: Channel;
@@ -63,7 +63,7 @@ export function useBackendStream(
         log.info('Telemetry stream connected', { source: 'ws' });
         ws.send(JSON.stringify({
           type: 'subscribe',
-          channels: channels ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system'],
+          channels: channels ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'],
         }));
       };
 

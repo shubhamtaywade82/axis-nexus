@@ -30,13 +30,13 @@ import { WsClientMessageSchema } from '../lib/routeSchemas';
  *    has fallen behind.
  */
 
-const ALL_CHANNELS: Channel[] = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system'];
+const ALL_CHANNELS: Channel[] = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'];
 // Per-channel hydration depth — each channel gets its OWN bounded slice of
 // history rather than one merged-then-sliced(-60) list, which a bursty
 // channel (ticks) could dominate entirely, starving the others out of the
 // snapshot a late-attaching dashboard needs most (recent logs and alerts).
 const HYDRATION_LIMITS: Partial<Record<Channel, number>> = {
-  tick: 20, portfolio: 5, risk: 5, log: 40, alert: 40, telemetry: 40,
+  tick: 20, portfolio: 5, risk: 5, log: 40, alert: 40, telemetry: 40, scalp: 50,
 };
 
 const TICK_FLUSH_MS = 100; // ~10Hz — well above human perception for a number redrawing
