@@ -24,6 +24,7 @@ const agentItems: NavItem[] = [
   { id: 'agent-console', label: 'Agent Console', icon: <Brain size={13} /> },
   { id: 'research-console', label: 'Research Console', icon: <BookOpen size={13} /> },
   { id: 'scalp-monitor', label: 'Scalp Monitor', icon: <Zap size={13} /> },
+  { id: 'scalp-simulator', label: 'Scalp Simulator', icon: <ChartLine size={13} /> },
   { id: 'agent-monitor', label: 'Ops Telemetry', icon: <Satellite size={13} /> },
   { id: 'agent-tools-memory', label: 'Tools & Memory', icon: <Database size={13} /> },
 ];
