@@ -90,6 +90,30 @@ export class AutonomyEngine {
     this.eodDate = istNow().toISOString().slice(0, 10);
     this.eodDone = false;
 
+    // EOD latch recovery: a crash after squareOffAll() ran but before
+    // `eodDone = true` was set in memory (or a simple process restart
+    // inside the 15:20–15:30 window) would re-run EOD square-off against
+    // already-flat positions. The journal is the durable record of this
+    // — an `eod` entry for today means square-off already fired. Read
+    // it back on start so a restart never re-squares a flat book.
+    // (Same epistemic posture as crossCheckJournalOnBoot: the journal is
+    // an audit trail, not a source of truth — but for a one-shot daily
+    // latch it IS the most authoritative record, since it's written
+    // atomically with the square-off itself.)
+    try {
+      const todayEntries = journal.readTodayEntries(this.eodDate);
+      const hasEodEntry = todayEntries.some((e) => e.kind === 'eod');
+      if (hasEodEntry) {
+        this.eodDone = true;
+        eventBus.log('SYSTEM', `EOD latch recovered from journal — square-off already fired today (${this.eodDate}), will not re-fire`, 'autonomy');
+      }
+    } catch {
+      // Journal read failure is non-fatal — fall through to default
+      // (eodDone = false), which means square-off will run if the
+      // window is open. Safe-side: prefer re-attempting a no-op close
+      // over skipping a needed square-off.
+    }
+
     this.unsubBus.push(eventBus.on('order', async (env) => {
       const p = env.payload || {};
       if (p.kind !== 'exit_signal') return;

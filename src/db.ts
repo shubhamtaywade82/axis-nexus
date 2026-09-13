@@ -27,7 +27,10 @@ const connectionString = process.env.DATABASE_URL || 'postgres://nemesis@localho
 
 export const pool = new Pool({
   connectionString,
-  max: 10,
+  // Tunable: autonomy/risk/ledger reads can saturate a small pool in broker
+  // mode under fast markets. Default 10 for paper (matches prior behavior);
+  // raise via PG_POOL_MAX for live/broker deployments.
+  max: Number(process.env.PG_POOL_MAX) || 10,
   idleTimeoutMillis: 30000,
 });
 
