@@ -129,3 +129,65 @@ export function zodError(err: z.ZodError): string {
   const path = first.path.length > 0 ? first.path.join('.') : 'body';
   return `${path}: ${first.message}`;
 }
+
+// ── WebSocket client→server messages ────────────────────────────────────
+//
+// The /ws protocol accepts three message types from the client. Previously
+// these were parsed with `JSON.parse` + ad-hoc `Array.isArray(msg.channels)`
+// checks — a malformed `channels` (e.g. a string instead of an array, or
+// unknown channel names) would either crash the handler or silently set the
+// subscription set to empty with no feedback to the client. Schemas make
+// the protocol explicit and reject unknown shapes with a typed error.
+
+const WS_CHANNELS = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system'] as const;
+
+export const WsSubscribeSchema = z.object({
+  type: z.literal('subscribe'),
+  channels: z.array(z.enum(WS_CHANNELS)).min(1).max(8).optional(),
+}).strict();
+
+export const WsUnsubscribeSchema = z.object({
+  type: z.literal('unsubscribe'),
+}).strict();
+
+export const WsPingSchema = z.object({
+  type: z.literal('ping'),
+}).strict();
+
+/** Discriminated union — parse any inbound WS message in one call. */
+export const WsClientMessageSchema = z.discriminatedUnion('type', [
+  WsSubscribeSchema,
+  WsUnsubscribeSchema,
+  WsPingSchema,
+]);
+
+// ── /api/market/* query params ──────────────────────────────────────────
+//
+// These are GET query-string params, so the schema parses req.query (an
+// object of string|string[] values from Express's qs parser) rather than
+// req.body. Coercion handles the string→number conversion that was
+// previously done ad-hoc with Number(req.query.days) || 5.
+
+export const OptionsAnalysisQuerySchema = z.object({
+  symbol: z.string().min(1).max(32).optional().default('NIFTY'),
+  days: z.coerce.number().int().min(1).max(10).optional().default(5),
+  interval: z.enum(['1', '5', '15', '30', '60']).optional().default('1'),
+  expiryFlag: z.enum(['WEEK', 'MONTH', 'NEXT_WEEK']).optional().default('WEEK'),
+  expiryCode: z.coerce.number().int().min(1).max(4).optional().default(1),
+}).strict();
+
+export const GreeksQuerySchema = z.object({
+  symbol: z.string().min(1).max(32).optional().default('NIFTY'),
+  expiry: z.string().min(1).max(32).optional(),
+  spot: z.coerce.number().positive().optional(),
+}).strict();
+
+export const QuoteQuerySchema = z.object({
+  exchange: z.string().min(1).max(32).optional().default('NSE_FNO'),
+}).strict();
+
+export const OptionChainQuerySchema = z.object({
+  expiry: z.string().min(1).max(32).optional(),
+}).strict();
+
+

@@ -83,10 +83,27 @@ export const requestLogger: import('express').RequestHandler = pinoHttp({
  * Express 5 async route rejections land here. Logs the error with the
  * request's correlation id and stack, and answers with the JSON error
  * shape the frontend already expects: { error: string }.
+ *
+ * In production, the response body is sanitized: the client sees a
+ * generic message ("Internal server error" / "Request failed") rather
+ * than the raw \`e.message\`, which can leak Postgres connection strings,
+ * broker API error stacks, file paths, or internal module names. The
+ * full detail is still logged server-side with the correlation id, so
+ * an operator can trace any 500 to its real cause via requestId.
+ *
+ * 4xx errors (caller mistakes) DO surface the raw message — they're
+ * already user-facing ("securityId and exchangeSegment are required") and
+ * sanitizing them would make the API harder to use without buying safety.
  */
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
   const status = typeof (err as any).status === 'number' ? (err as any).status : 500;
   const log = (req.log ?? logger).child({ requestId: req.id });
+  const isProd = process.env.NODE_ENV === 'production';
+  // 4xx: caller mistake, message is already user-facing — keep verbatim.
+  // 5xx: server fault, raw message may leak internals — sanitize in prod.
+  const clientMessage = status < 500 || !isProd
+    ? (err.message || 'Internal server error')
+    : (status >= 500 ? 'Internal server error' : 'Request failed');
   log.error(
     {
       err: {
@@ -97,11 +114,15 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
       method: req.method,
       url: req.url,
       status,
+      // Mark whether the client saw the real message or the sanitized one
+      // — useful when triaging a 500 from logs: \`sanitized:true\` means
+      // the operator needs to look up the requestId to learn the cause.
+      sanitized: clientMessage !== err.message,
     },
     status >= 500 ? 'Unhandled route error' : 'Request failed',
   );
   if (res.headersSent) return;
-  res.status(status).json({ error: err.message || 'Internal server error' });
+  res.status(status).json({ error: clientMessage });
 }
 
 /** JSON 404 for unknown /api paths (default Express HTML is useless to the SPA). */
