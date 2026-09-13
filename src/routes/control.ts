@@ -17,6 +17,7 @@ import {
   LongOptionPolicySchema, RiskLimitsPatchSchema, ScannerToggleSchema, SquareOffSchema,
   zodError,
 } from '../lib/routeSchemas';
+import { getRuntimeVersions } from '../lib/versions';
 
 /**
  * Control-plane routes.
@@ -49,11 +50,7 @@ export function controlRoutes(
       market: market.stats(),
       alerts,
       agentEvents,
-      version: {
-        node: process.version,
-        sdk: require('@nemesis-oss/dhanhq-sdk/package.json').version,
-        app: require('../../package.json').version,
-      },
+      version: getRuntimeVersions(),
     });
   });
 
