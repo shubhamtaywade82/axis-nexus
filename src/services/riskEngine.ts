@@ -11,6 +11,7 @@ import { PaperPortfolioSource, type PortfolioSource } from './portfolioSource';
 import { getSystemState } from './systemState';
 import { dhanRateLimitRemainingSec, isDhanRateLimited } from '../lib/dhanRateLimit';
 import { getTradingMode, isLiveMode } from '../lib/tradingMode';
+import { getTraderControls } from '../lib/dhanTraderControls';
 import {
   pushAlert, getRiskState, saveRiskState,
   listPaperStrategies, updatePaperStrategyStatus,
@@ -227,12 +228,18 @@ export class RiskEngine {
     const details: any = { mode: getTradingMode(), positionsClosed: 0 };
 
     if (isLiveMode()) {
-      try {
-        await (this.client as any).traderControls?.setKillSwitch?.('ACTIVATE');
-        details.brokerKillSwitch = 'ACTIVATE';
-      } catch (e: any) {
-        details.brokerKillSwitchError = e.message;
-        eventBus.log('ERROR', `Broker kill switch ACTIVATE failed: ${e.message} — proceeding to square off locally anyway`, 'risk_engine');
+      const traderControls = getTraderControls(this.client);
+      if (!traderControls) {
+        details.brokerKillSwitchError = 'TraderControls not available on SDK client — broker kill switch could not be engaged';
+        eventBus.log('ERROR', 'Broker kill switch UNAVAILABLE: SDK client has no TraderControls — proceeding to square off locally anyway', 'risk_engine');
+      } else {
+        try {
+          await traderControls.setKillSwitch('ACTIVATE');
+          details.brokerKillSwitch = 'ACTIVATE';
+        } catch (e: any) {
+          details.brokerKillSwitchError = e.message;
+          eventBus.log('ERROR', `Broker kill switch ACTIVATE failed: ${e.message} — proceeding to square off locally anyway`, 'risk_engine');
+        }
       }
     }
 
@@ -287,7 +294,10 @@ export class RiskEngine {
     await saveRiskState({ killed: false, killedDate: null, limits: this.limits });
     try {
       if (isLiveMode()) {
-        await (this.client as any).traderControls?.setKillSwitch?.('DEACTIVATE');
+        const traderControls = getTraderControls(this.client);
+        if (traderControls) {
+          await traderControls.setKillSwitch('DEACTIVATE');
+        }
       }
     } catch { /* broker may reject if not armed */ }
     eventBus.log('INFO', 'Kill switch disarmed — trading re-enabled', 'risk_engine');
