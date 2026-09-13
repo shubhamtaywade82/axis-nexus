@@ -7,6 +7,7 @@ import { toTrailConfig } from './marketData';
 import type { RiskEngine } from './riskEngine';
 import type { AgentOrchestrator } from './agent';
 import type { AdaptiveSupertrendScanner } from './adaptiveSupertrendScanner';
+import type { ScalpScanner } from './scalpScanner';
 import type { ResearchOrchestrator } from './research/researchOrchestrator';
 import { LongOptionPositionManager } from './longOptionPositionManager';
 import {
@@ -38,6 +39,7 @@ export class AutonomyEngine {
   private agent: AgentOrchestrator | null = null;
   private research: ResearchOrchestrator | null = null;
   private scanner: AdaptiveSupertrendScanner | null = null;
+  private scalpScanner: ScalpScanner | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private enabled = true;
   private scanEnabled = process.env.AUTONOMOUS_SCAN_ENABLED !== 'false';
@@ -79,6 +81,11 @@ export class AutonomyEngine {
     this.scanner = scanner;
     eventBus.log('SYSTEM', 'Adaptive Supertrend scanner armed (1m/5m, naked ATM CE/PE)', 'adaptive_supertrend');
     void scanner.warmup();
+  }
+
+  setScalpScanner(scanner: ScalpScanner): void {
+    this.scalpScanner = scanner;
+    eventBus.log('SYSTEM', 'Scalp scanner armed (fee-aware momentum + delta/spread/IV gates)', 'scalp_scanner');
   }
 
   setScanEnabled(on: boolean): void {
@@ -196,6 +203,7 @@ export class AutonomyEngine {
 
         await this.evaluateAutonomousScan(clock);
         if (this.scanner) await this.scanner.evaluate(clock);
+        if (this.scalpScanner) await this.scalpScanner.evaluate(clock);
       }
 
       const nextDelay = clock.isMarketOpen ? 2000 : 30000;
