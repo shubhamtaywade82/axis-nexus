@@ -311,6 +311,100 @@
   border-bottom: 1px solid #374151;
 }
 
+/* Live mode status */
+.sim-live-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #1f2937;
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+.sim-conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.sim-conn-dot.connected {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+}
+
+.sim-conn-dot.disconnected {
+  background: #ef4444;
+}
+
+.sim-pos-count {
+  margin-left: auto;
+  font-weight: 600;
+  color: #f3f4f6;
+}
+
+.sim-pos-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #1f2937;
+  border-radius: 0.5rem;
+}
+
+.sim-pos-selector select {
+  flex: 1;
+  background: #111827;
+  border: 1px solid #374151;
+  border-radius: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  color: #f3f4f6;
+  font-size: 0.8rem;
+}
+
+.sim-empty {
+  padding: 2rem;
+  background: #1f2937;
+  border-radius: 0.5rem;
+  text-align: center;
+  color: #9ca3af;
+}
+
+.sim-empty p {
+  margin: 0.5rem 0;
+}
+
+.sim-empty-hint {
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-top: 1rem !important;
+}
+
+.sim-empty code {
+  background: #111827;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #fbbf24;
+}
+
+.sim-trade-state.live {
+  border-left: 3px solid #3b82f6;
+}
+
+.sim-symbol {
+  font-weight: 700;
+  color: #f3f4f6;
+}
+
+.sim-warn {
+  color: #fbbf24;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .scalp-simulator {
