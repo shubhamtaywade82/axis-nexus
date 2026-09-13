@@ -25,11 +25,11 @@ import puppeteer from 'puppeteer';
 const FRONTEND_URL = process.env.E2E_FRONTEND_URL || 'http://localhost:5175';
 const BACKEND_URL = process.env.E2E_BACKEND_URL || 'http://localhost:3003';
 
-async function sleep(ms: number): Promise<void> {
+function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function backendReachable(): Promise<boolean> {
+async function backendReachable() {
   try {
     const res = await fetch(`${BACKEND_URL}/api/health`);
     return res.ok;
@@ -38,7 +38,7 @@ async function backendReachable(): Promise<boolean> {
   }
 }
 
-async function main(): Promise<number> {
+async function main() {
   if (!(await backendReachable())) {
     console.error(`❌ Backend not reachable at ${BACKEND_URL} — start it with \`npm run dev:server\` first.`);
     return 1;
@@ -54,7 +54,7 @@ async function main(): Promise<number> {
     await page.setViewport({ width: 1280, height: 800 });
 
     // Collect console errors — any uncaught exception in the SPA is a failure
-    const consoleErrors: string[] = [];
+    const consoleErrors = [];
     page.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(msg.text());
     });
@@ -73,10 +73,26 @@ async function main(): Promise<number> {
     }
     console.log('✓ Dashboard rendered');
 
-    // Navigate to the dashboard's kill-switch UI — the Header component
-    // renders a "KILL SWITCH" button. We verify it exists and is clickable.
-    const killButton = await page.$('button::-p-text(KILL)', { timeout: 5000 }).catch(() => null)
-      || await page.$('[aria-label*="kill" i]').catch(() => null);
+    // Find the kill-switch button. Try multiple selectors — the Header
+    // component renders a "KILL SWITCH" button, but the exact text/aria
+    // label may vary. waitForSelector with a timeout gives the SPA time
+    // to render it after hydration.
+    let killButton = null;
+    const selectors = [
+      'button[aria-label*="kill" i]',
+      'button[aria-label*="KILL"]',
+    ];
+    for (const sel of selectors) {
+      killButton = await page.$(sel).catch(() => null);
+      if (killButton) break;
+    }
+    // Fallback: find any button whose text contains "KILL"
+    if (!killButton) {
+      killButton = await page.evaluateHandle(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        return buttons.find((b) => b.textContent && b.textContent.toUpperCase().includes('KILL')) || null;
+      }).catch(() => null);
+    }
 
     if (!killButton) {
       console.error('❌ Kill-switch button not found on the dashboard.');
