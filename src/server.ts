@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import './lib/env';
@@ -20,6 +21,7 @@ import { attachBusLoggerBridge } from './lib/busLoggerBridge';
 import { clientLogsRoutes } from './routes/clientLogs';
 import { researchRoutes } from './routes/research';
 import { extractBearer, safeTokenCompare } from './lib/authToken';
+import { writeLimiter, agentRunLimiter } from './lib/rateLimiters';
 
 
 const PORT = Number(process.env.PORT) || 3003;
@@ -88,6 +90,43 @@ async function main() {
   }
 
   const app = express();
+
+  // Security headers (helmet). The backend serves JSON only — the React
+  // SPA lives on a different origin (Vite :5175 dev / static host in prod)
+  // so we don't need a permissive CSP for inline scripts/styles here.
+  // Default helmet gives us:
+  //   - X-Content-Type-Options: nosniff (MIME sniffing attacks)
+  //   - X-Frame-Options: DENY (clickjacking)
+  //   - Strict-Transport-Security (when behind HTTPS, ignored on http)
+  //   - X-DNS-Prefetch-Control: off
+  //   - Referrer-Policy: no-referrer
+  //   - Cross-Origin-* Policies
+  // We relax only contentSecurityPolicy: the default is too strict for
+  // a JSON API that talks to a browser fetch() on a different origin
+  // (it would block the very preflight CORS relies on), and the WS
+  // upgrade is on a separate path. Set explicit directives rather than
+  // disabling entirely.
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'none'"],
+        // No HTML is served from this origin — connectSrc is irrelevant
+        // for the API itself, but explicit 'none' would block a browser
+        // preview of a JSON response from fetching its own inline source
+        // map. Leave it permissive; the SPA's CSP is its own concern.
+        connectSrc: ["'self'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'none'"],
+      },
+    },
+    // The control plane is its own origin — never renderable in a frame
+    // on someone else's page (defense-in-depth against clickjacking even
+    // though X-Frame-Options: DENY already covers this).
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'same-origin' },
+  }));
+
   const allowedOrigins = [ALLOWED_ORIGIN, 'http://localhost:5175', 'http://127.0.0.1:5175', 'http://localhost:5173', 'http://127.0.0.1:5173'];
   app.use(cors({
     origin: (origin, cb) => {
@@ -126,10 +165,18 @@ async function main() {
   streamManager.attach(); // bind hub to the central event bus
 
   app.use('/api/market', marketRoutes(core.client, core.market));
-  app.use('/api/portfolio', portfolioRoutes(core.client, core.market, core.risk, core.paper, core.agent, core.portfolio, core.sandboxClient));
+  // Rate-limit write routes (POST/PUT/DELETE) — writeLimiter skips GETs
+  // internally so dashboard polling never trips it. 60 req/min per IP is
+  // generous for any manual operator flow and stops a runaway script.
+  app.use('/api/portfolio', writeLimiter, portfolioRoutes(core.client, core.market, core.risk, core.paper, core.agent, core.portfolio, core.sandboxClient));
   app.use('/api/ollama', ollamaRoutes());
   app.use('/api/infra', infraRoutes(streamManager, { market: core.market, risk: core.risk, autonomy: core.autonomy, agent: core.agent, stream: streamManager }));
-  app.use('/api/control', controlRoutes(core.client, core.risk, core.autonomy, core.agent, core.market, core.sandboxClient));
+  // Agent runs get their own tighter cap (6/min) because each run is
+  // expensive (10-30s, LLM tokens). The agent's own `running` mutex
+  // already rejects concurrent runs with 409; this stops the queue from
+  // filling up before the mutex ever sees them.
+  app.use('/api/control/agent/run', agentRunLimiter);
+  app.use('/api/control', writeLimiter, controlRoutes(core.client, core.risk, core.autonomy, core.agent, core.market, core.sandboxClient));
   app.use('/api/client-logs', clientLogsRoutes());
   app.use('/api/research', researchRoutes(core.research, core.researchScheduler));
 
