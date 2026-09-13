@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { log } from '../services/logger';
+import { wsUrlWithToken } from '../services/api';
 
 /**
  * Backend telemetry stream — the ONLY realtime channel into the UI.
@@ -43,8 +44,10 @@ export function useBackendStream(
       return;
     }
 
-    const defaultHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-    const WS_URL = import.meta.env.VITE_WS_URL || `ws://${defaultHost}:3003/ws`;
+    // WS URL with ?token= appended when VITE_CONTROL_PLANE_TOKEN is set
+    // (see services/api.ts). The backend's verifyClient uses the same
+    // timing-safe compare as the HTTP bearer gate.
+    const WS_URL = wsUrlWithToken('/ws');
 
     try {
       const ws = new WebSocket(WS_URL);

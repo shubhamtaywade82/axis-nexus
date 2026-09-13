@@ -3,6 +3,31 @@ import { log } from './logger';
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
 /**
+ * Optional bearer token for the control plane.
+ *
+ * The backend (src/server.ts) makes CONTROL_PLANE_TOKEN MANDATORY when
+ * CONTROL_PLANE_HOST is not loopback, and optional (but enforced if set)
+ * on loopback. The frontend reads it from VITE_CONTROL_PLANE_TOKEN at
+ * build time — set it in frontend/.env.local when running the backend
+ * with the token enabled, otherwise every request returns 401.
+ *
+ * This is deliberately a build-time constant, not a runtime fetch — a
+ * runtime fetch would itself need to be unauthenticated to get the token,
+ * which defeats the point. For a hosted deployment, bake the token into
+ * the build via CI secrets.
+ */
+const CONTROL_PLANE_TOKEN = import.meta.env.VITE_CONTROL_PLANE_TOKEN || '';
+
+/** Returns the WS URL with ?token= appended when a token is configured. */
+export function wsUrlWithToken(path: string): string {
+  const defaultHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+  const base = import.meta.env.VITE_WS_URL || `ws://${defaultHost}:3003${path}`;
+  if (!CONTROL_PLANE_TOKEN) return base;
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}${sep}token=${encodeURIComponent(CONTROL_PLANE_TOKEN)}`;
+}
+
+/**
  * Central API client.
  *
  * Every request carries an `x-request-id` (UUID) — the backend echoes
@@ -10,6 +35,13 @@ const API_BASE = import.meta.env.VITE_API_URL || '';
  * the UI click through every backend log line. Failed requests are
  * reported to the client-log ingest with endpoint, status, duration
  * and the correlation id.
+ *
+ * When VITE_CONTROL_PLANE_TOKEN is set, every request also carries an
+ * `Authorization: Bearer <token>` header — the backend's timing-safe
+ * compare (src/lib/authToken.ts) validates it before any route handler
+ * runs. The header is omitted on /api/health (the backend explicitly
+ * exempts health from the token gate, and an unauthenticated health
+ * ping lets the dashboard show "backend down" cleanly).
  */
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const requestId = crypto.randomUUID();
@@ -21,6 +53,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       headers: {
         'Content-Type': 'application/json',
         'x-request-id': requestId,
+        // Attach the bearer token on every request except /api/health
+        // (which is exempt server-side and shouldn't 401 just because
+        // the dashboard booted before the operator finished typing the
+        // token into .env.local).
+        ...(CONTROL_PLANE_TOKEN && path !== '/api/health'
+          ? { Authorization: `Bearer ${CONTROL_PLANE_TOKEN}` }
+          : {}),
         ...(options?.headers ?? {}),
       },
     });
@@ -39,6 +78,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    // A 401 with no token configured is a configuration error, not a
+    // transient failure — surface a clear message rather than the generic
+    // "Unauthorized" so the operator knows to set VITE_CONTROL_PLANE_TOKEN.
+    if (res.status === 401 && !CONTROL_PLANE_TOKEN) {
+      throw new Error('Backend requires a control-plane token (returned 401). Set VITE_CONTROL_PLANE_TOKEN in frontend/.env.local and rebuild.');
+    }
     log.error('API request failed', {
       endpoint: path,
       method: options?.method ?? 'GET',
