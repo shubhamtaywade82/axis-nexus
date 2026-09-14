@@ -20,6 +20,7 @@ import { Logs } from "./pages/Logs";
 import { Config } from "./pages/Config";
 import { ResearchConsole } from "./pages/ResearchConsole";
 import { ScalpMonitor } from "./pages/ScalpMonitor";
+import { OptionsScalpingSimulator } from "./pages/OptionsScalpingSimulator";
 import { api } from "./services/api";
 import { openDeployStrategyModal } from "./pages/DeployModal";
 
@@ -33,6 +34,7 @@ const PAGE_TITLES: Record<string, [string, string]> = {
   "agent-console": ["Agent Console", "REACT MULTI-AGENT LOOP"],
   "research-console": ["Research Console", "INSTITUTIONAL EQUITY INTELLIGENCE"],
   "scalp-monitor": ["Scalp Monitor", "FEE-AWARE BOTH-SIDE RATCHET"],
+  "scalp-simulator": ["Scalp Simulator", "CHART.JS VISUALIZATION"],
   "agent-monitor": ["Ops Telemetry", "AGENT INTERNAL METRICS"],
   "agent-tools-memory": ["Tools & Memory", "PILLARS 2 & 3"],
   "greeks-analytics": ["Greeks & Volatility", "ANALYTICS & IV SURFACE"],
@@ -182,6 +184,8 @@ function AppInner() {
         return <ResearchConsole />;
       case "scalp-monitor":
         return <ScalpMonitor />;
+      case "scalp-simulator":
+        return <OptionsScalpingSimulator />;
       case "agent-monitor":
         return <AgentMonitor />;
       case "agent-tools-memory":
