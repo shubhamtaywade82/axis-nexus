@@ -26,13 +26,15 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { apiRequest } from '../services/api';
-import { useBackendStream, type Envelope } from '../hooks/useBackendStream';
+import { useBackendStream, type Envelope, type Channel } from '../hooks/useBackendStream';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
+  BarController,
   Title,
   Tooltip,
   Legend,
@@ -48,11 +50,15 @@ ChartJS.register(
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
+  BarController,
   Title,
   Tooltip,
   Legend,
   Filler,
 );
+
+const SCALP_CHANNELS: Channel[] = ['scalp'];
 
 // ── Types (mirror backend src/services/scalpExitPolicy.ts) ──────────────
 
@@ -426,7 +432,7 @@ export function OptionsScalpingSimulator({
         break;
       }
     }
-  }, [mode, selectedPositionId, onTradeExit]), ['scalp']);
+  }, [mode, selectedPositionId, onTradeExit]), SCALP_CHANNELS);
 
   // ── Start a single trade ──────────────────────────────────────────────
 

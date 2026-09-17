@@ -36,6 +36,8 @@ export function useBackendStream(
   const retriesRef = useRef(0);
   const onEnvelopeRef = useRef(onEnvelope);
   onEnvelopeRef.current = onEnvelope;
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
   const isMountedRef = useRef(true);
 
   const connect = useCallback(() => {
@@ -63,7 +65,7 @@ export function useBackendStream(
         log.info('Telemetry stream connected', { source: 'ws' });
         ws.send(JSON.stringify({
           type: 'subscribe',
-          channels: channels ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'],
+          channels: channelsRef.current ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'],
         }));
       };
 
@@ -101,7 +103,17 @@ export function useBackendStream(
         reconnectTimer.current = setTimeout(connect, 3000);
       }
     }
-  }, [channels]);
+  }, []);
+
+  const channelsKey = channels ? [...channels].sort().join(',') : '';
+  useEffect(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'subscribe',
+        channels: channelsRef.current ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'],
+      }));
+    }
+  }, [channelsKey]);
 
   useEffect(() => {
     isMountedRef.current = true;
