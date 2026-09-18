@@ -22,14 +22,13 @@ export function Dashboard({ onNavigate, onDeploy }: DashboardProps) {
   const [pnlPeriod, setPnlPeriod] = useState<PnlChartPeriod>('SESSION');
   // Day P&L is session-scoped (resets at IST day rollover), not the wallet's
   // lifetime realizedPnl — falls back to it only if the backend predates
-  // sessionRealizedPnl (RISK-01).
+  // sessionRealizedPnl (RISK-01). Both figures come from the backend's own
+  // WalletSnapshot, not a re-sum of state.positions here — positions and
+  // funds arrive via separate WS pushes on different cadences, so an
+  // independent per-component sum drifts from the wallet's own numbers
+  // (and from any other component computing the same thing its own way).
   const realizedPnl = Number(state.funds.sessionRealizedPnl ?? state.funds.realizedPnl ?? 0);
-  // Only OPEN positions' unrealized PnL — a closed position's lifetime
-  // realizedProfit is already inside state.funds.realizedPnl and must not
-  // be summed again here, or Day P&L double-counts every closed trade.
-  const unrealizedPnl = state.positions
-    .filter((p) => Number(p.netQty ?? p.net_qty ?? 0) !== 0)
-    .reduce((acc, p) => acc + (Number(p.unrealizedProfit ?? p.unrealizedPnl) || 0), 0);
+  const unrealizedPnl = Number(state.funds.unrealizedPnl || 0);
   const totalPnl = realizedPnl + unrealizedPnl;
   const windowSecs = PNL_PERIOD_SECONDS[pnlPeriod];
   const pnlSeries: PnlPoint[] = windowSecs
@@ -226,8 +225,9 @@ function MetricsGrid({
   const unrealized = totalPnl - realized;
   const equity = Number(state.funds.equity ?? (total + unrealized));
   const totalOrders = state.orders.length;
-  const filledOrders = state.orders.filter((o) => o.status === "TRADED").length;
-  const rejectedOrders = state.orders.filter((o) => o.status === "REJECTED").length;
+  const filledOrders = state.orders.filter((o) => (o.status || '').toUpperCase() === "TRADED").length;
+  const rejectedOrders = state.orders.filter((o) => (o.status || '').toUpperCase() === "REJECTED").length;
+  const pendingOrders = state.orders.filter((o) => ['PENDING', 'TRANSIT', 'OPEN'].includes((o.status || '').toUpperCase())).length;
   const openPositions = state.positions.filter((p) => Number(p.netQty ?? p.net_qty ?? 0) !== 0);
 
   return (
@@ -306,7 +306,7 @@ function MetricsGrid({
         <div className="text-[10px] font-mono text-muted mt-1">
           Filled <span className="text-accent">{filledOrders}</span> · Rejected{" "}
           <span className="text-danger">{rejectedOrders}</span> · Pending{" "}
-          <span className="text-muted">{totalOrders - filledOrders - rejectedOrders}</span>
+          <span className="text-muted">{pendingOrders}</span>
         </div>
       </Card>
     </div>

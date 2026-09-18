@@ -59,19 +59,18 @@ export function Header({ pageTitle, pageSubtitle, onKillSwitch }: HeaderProps) {
   const sensex = indices.SENSEX?.ltp ? indices.SENSEX : null;
   const vix = indices.INDIAVIX?.ltp ? indices.INDIAVIX : null;
 
-  // Real-time Day P&L and Total Equity calculation from live state
-  const realizedPnl = Number(state.funds.realizedPnl || 0);
-  const unrealizedPnl = state.positions
-    .filter((p) => Number(p.netQty ?? p.net_qty ?? 0) !== 0)
-    .reduce((acc, p) => {
-      const un = p.unrealizedProfit ?? p.unrealizedPnl ?? (Number(p.pnl || 0) - Number(p.realizedProfit || p.realized_pnl || 0));
-      return acc + Number(un || 0);
-    }, 0);
+  // Day P&L and Net Worth read straight off the backend's WalletSnapshot —
+  // the same fields Dashboard's MetricsGrid uses — rather than re-summing
+  // state.positions here. Positions and funds arrive via separate WS
+  // pushes on different cadences, so a second independent calculation
+  // drifts from the wallet's own numbers (RISK-01 sibling bug).
+  const realizedPnl = Number(state.funds.sessionRealizedPnl ?? state.funds.realizedPnl ?? 0);
+  const unrealizedPnl = Number(state.funds.unrealizedPnl || 0);
   const totalPnl = realizedPnl + unrealizedPnl;
   const avail = Number(state.funds.availableMargin || 100000);
   const used = Number(state.funds.usedMargin || 0);
   const baseBalance = Number(state.funds.totalBalance || (avail + used));
-  const totalEquity = baseBalance + unrealizedPnl;
+  const totalEquity = Number(state.funds.equity ?? (baseBalance + unrealizedPnl));
   const pnlPct = baseBalance > 0 ? (totalPnl / baseBalance) * 100 : 0;
 
   return (

@@ -139,6 +139,28 @@ describe('SandboxExecutionEngine.placeOrder', () => {
     }));
     expect(invalidateSpy).toHaveBeenCalled();
   });
+
+  it('falls back to local sandbox paper execution when Dhan returns DH-905 mock OMS limitation', async () => {
+    const { sandbox, client } = setup({ orderStatus: 'TRADED' });
+    jest.spyOn(sandboxInstruments, 'resolveSandboxOptionLeg').mockResolvedValue({
+      securityId: '56995', quantity: 65, exchangeSegment: 'NSE_FNO', tickSize: 0.05,
+    });
+    const dh905Err = new Error('Dhan API request failed with status 400 (DH-905)');
+    (dh905Err as any).errorCode = 'DH-905';
+    jest.spyOn(client.orders, 'place').mockRejectedValue(dh905Err);
+
+    const res = await sandbox.placeOrder({
+      correlation_id: 'corr-dh905', intent_id: 'i-dh905',
+      params: {
+        security_id: '56995', quantity: 65, transaction_type: 'BUY', price: 90,
+        exchange_segment: 'NSE_FNO',
+      },
+    });
+
+    expect(res.status).toBe('TRADED');
+    expect(res.is_paper).toBe(true);
+    expect(res.fill_price).toBe(90);
+  });
 });
 
 describe('SandboxExecutionEngine.closeLeg', () => {

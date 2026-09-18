@@ -19,7 +19,7 @@ import { shouldEmitKeyedLog } from '../lib/logPolicy';
 import {
   clearDhanRateLimit, isDhanRateLimited, isRateLimitError, noteDhanRateLimit,
 } from '../lib/dhanRateLimit';
-import { brokerJournalMode } from '../lib/tradingMode';
+import { brokerJournalMode, isSandboxMode } from '../lib/tradingMode';
 
 /**
  * Normalizes RiskEngine's and AutonomyEngine's view of "the account" across
@@ -281,6 +281,21 @@ function emptyWallet(): WalletSnapshot {
   return { availableMargin: 0, usedMargin: 0, realizedPnl: 0, sessionRealizedPnl: 0, unrealizedPnl: 0, totalCharges: 0, netRealizedPnl: 0, totalBalance: 0, equity: 0 };
 }
 
+function markBrokerPositionsToMarket(positions: NormalizedPosition[], ltpResolver: LtpResolver): number {
+  let total = 0;
+  for (const p of positions) {
+    if (p.netQty === 0) continue;
+    const live = ltpResolver(p.securityId, p.tradingSymbol);
+    if (live != null && live > 0) {
+      p.ltp = live;
+      p.unrealizedProfit = Number((p.netQty > 0 ? (live - p.buyAvg) * p.netQty : (p.sellAvg - live) * Math.abs(p.netQty)).toFixed(2));
+      p.pnl = Number((p.realizedProfit + p.unrealizedProfit).toFixed(2));
+    }
+    total += p.unrealizedProfit;
+  }
+  return Number(total.toFixed(2));
+}
+
 /**
  * Polls the real DhanHQ account on a fixed cadence (default 3s — the same
  * order of magnitude as the market-data REST fallback poll elsewhere in
@@ -493,30 +508,29 @@ export class BrokerPortfolioSource implements PortfolioSource {
   async getWallet(): Promise<WalletSnapshot> {
     await this.ensureFresh();
     if (this.brokerMode() !== 'sandbox') return this.cachedWallet;
-    return this.withSandboxPaperWallet(this.cachedWallet);
+    return this.sandboxWallet(this.cachedWallet);
   }
 
-  /** Sandbox fills land at Dhan *and* on the local paper ledger. When the
-   * local book still has open legs the broker API has never seen (429
-   * rejects, restarts, paper-only closes), margin and net-worth must follow
-   * the paper wallet — not the broker's empty ₹50k sandbox allocation. */
-  private async withSandboxPaperWallet(brokerWallet: WalletSnapshot): Promise<WalletSnapshot> {
+  /** Sandbox net worth/margin is the DhanHQ sandbox account, full stop —
+   * the local paper ledger has its own separate starting capital and is
+   * ONLY the store for SL/target/trailing-stop metadata (mergeSandboxPositions),
+   * never for money. Blending the paper ledger's own P&L in here was the
+   * bug: it made "Sandbox Net Worth" show the paper book's ~₹1L basis
+   * instead of the broker's real ~₹10L sandbox allocation.
+   *
+   * The one exception: when NOTHING is open anywhere (paper or broker),
+   * DhanHQ's sandbox funds API is known to keep reporting a stale
+   * utilizedAmount for orders stuck forever in TRANSIT (see
+   * /api/portfolio/margin/reconcile) — zeroing usedMargin here is reading
+   * "nothing is actually blocking capital" correctly, not overriding a
+   * trustworthy number. checkMarginDrift() alerts when this fires so the
+   * drift stays visible instead of silently vanishing. */
+  private async sandboxWallet(brokerWallet: WalletSnapshot): Promise<WalletSnapshot> {
     const paperOpen = (await listPaperPositions()).filter((p) => Number(p.netQty ?? 0) !== 0);
-    if (paperOpen.length === 0) return brokerWallet;
-    const paperWallet = await getPaperWallet().catch(() => null);
-    if (!paperWallet) return brokerWallet;
-    return {
-      ...brokerWallet,
-      availableMargin: Number(paperWallet.availableMargin),
-      usedMargin: Number(paperWallet.usedMargin),
-      totalBalance: Number(paperWallet.totalBalance),
-      realizedPnl: Number(paperWallet.realizedPnl ?? paperWallet.sessionRealizedPnl ?? 0),
-      sessionRealizedPnl: Number(paperWallet.sessionRealizedPnl ?? paperWallet.realizedPnl ?? 0),
-      netRealizedPnl: Number(paperWallet.netRealizedPnl ?? paperWallet.sessionRealizedPnl ?? 0),
-      totalCharges: Number(paperWallet.totalCharges ?? 0),
-      unrealizedPnl: Number(paperWallet.unrealizedPnl ?? brokerWallet.unrealizedPnl),
-      equity: Number(paperWallet.equity ?? brokerWallet.equity),
-    };
+    const brokerOpen = this.cachedPositions.filter((p) => p.netQty !== 0);
+    if (paperOpen.length > 0 || brokerOpen.length > 0) return brokerWallet;
+    const total = brokerWallet.totalBalance || (brokerWallet.availableMargin + brokerWallet.usedMargin);
+    return { ...brokerWallet, usedMargin: 0, availableMargin: total, totalBalance: total, equity: total };
   }
 
   /** Compares this poll's realizedProfit per symbol against the last poll's
@@ -564,19 +578,26 @@ export class BrokerPortfolioSource implements PortfolioSource {
     if (this.brokerMode() === 'sandbox') {
       const mark = await markPositionsToMarket(ltpResolver);
       await this.maybeRefreshBrokerSnapshot(false);
+      const brokerUnrealized = markBrokerPositionsToMarket(this.cachedPositions, ltpResolver);
       const brokerOpen = this.cachedPositions.filter((p) => p.netQty !== 0);
       const paperOpen = (await listPaperPositions()).filter((p) => Number(p.netQty ?? 0) !== 0);
       if (brokerOpen.length === 0 && paperOpen.length > 0) {
-        const paperWallet = await getPaperWallet().catch(() => null);
-        if (paperWallet) {
-          this.cachedWallet.usedMargin = Number(paperWallet.usedMargin);
-          this.cachedWallet.availableMargin = Number(paperWallet.availableMargin);
-          this.cachedWallet.totalBalance = Number(paperWallet.totalBalance);
+        const pw = await getPaperWallet().catch(() => null);
+        if (pw) {
+          this.cachedWallet.usedMargin = Number(pw.usedMargin);
+          this.cachedWallet.availableMargin = Number(pw.availableMargin);
+          this.cachedWallet.totalBalance = Number(pw.totalBalance);
         }
+      } else if (brokerOpen.length === 0 && paperOpen.length === 0) {
+        const total = this.cachedWallet.totalBalance || (this.cachedWallet.availableMargin + this.cachedWallet.usedMargin);
+        this.cachedWallet.usedMargin = 0;
+        this.cachedWallet.availableMargin = total;
+        this.cachedWallet.totalBalance = total;
       }
-      this.cachedWallet.unrealizedPnl = mark.totalUnrealized;
-      this.cachedWallet.equity = Number((this.cachedWallet.totalBalance + mark.totalUnrealized).toFixed(2));
-      return mark;
+      const combined = Number((mark.totalUnrealized + brokerUnrealized).toFixed(2));
+      this.cachedWallet.unrealizedPnl = combined;
+      this.cachedWallet.equity = Number((this.cachedWallet.totalBalance + combined).toFixed(2));
+      return { totalUnrealized: combined, staleCount: mark.staleCount };
     }
     await this.ensureFresh();
     return { totalUnrealized: this.cachedWallet.unrealizedPnl, staleCount: this.degraded ? this.cachedPositions.length : 0 };
@@ -615,10 +636,11 @@ export class BrokerPortfolioSource implements PortfolioSource {
   private async closeSandboxPaperOnly(pos: NormalizedPosition, reason: string): Promise<CloseResult> {
     const fallbackPrice = pos.costPrice || pos.buyAvg || pos.sellAvg || 100;
     const limitPrice = roundToTick(pos.ltp > 0 ? pos.ltp : fallbackPrice, 5);
-    const paperClose = await closePaperPosition(pos.tradingSymbol, limitPrice, async () => 0, 'EXIT');
+    const paperClose = await closePaperPosition(toInstrumentKey(pos), limitPrice, async () => 0, 'EXIT');
     if (paperClose.status !== 'TRADED') {
       return { status: 'REJECTED', symbol: pos.tradingSymbol, reason: paperClose.message || 'Paper close failed' };
     }
+    this.invalidate();
     eventBus.log('TRADE', `Sandbox paper close ${pos.tradingSymbol} (${reason})`, 'portfolio_source');
     return { status: 'TRADED', symbol: pos.tradingSymbol, fillPrice: paperClose.fillPrice };
   }
@@ -762,8 +784,21 @@ function symDiff(a: Set<string>, b: Set<string>): string[] {
 
 async function listPendingBrokerOrders(client: DhanClient): Promise<MarginReconcileReport['pendingOrders']> {
   const raw = await client.orders.list().catch(() => []);
+  const cancelledKeys = new Set(
+    journal
+      .readTodayEntries()
+      .filter((e) => e.kind === 'order_result' && (e.payload as any)?.status === 'CANCELLED')
+      .flatMap((e) => [(e.payload as any)?.order_id, (e.payload as any)?.correlation_id].filter(Boolean) as string[]),
+  );
   return (Array.isArray(raw) ? raw : [])
-    .filter((r) => ['PENDING', 'TRANSIT'].includes(String(r.orderStatus ?? '')))
+    .filter((r) => {
+      const status = String(r.orderStatus ?? '');
+      if (!['PENDING', 'TRANSIT'].includes(status)) return false;
+      const orderId = String(r.orderId ?? '');
+      const corrId = String(r.correlationId ?? '');
+      if (cancelledKeys.has(orderId) || (corrId && cancelledKeys.has(corrId))) return false;
+      return true;
+    })
     .map((r) => ({
       id: String(r.orderId ?? ''),
       instrument: String(r.tradingSymbol ?? ''),
@@ -787,14 +822,18 @@ export async function buildMarginReconcileReport(
     getPaperWallet(),
     listPaperPositions(),
   ]);
-  const usedMargin = Number((fundsRes as any)?.utilizedAmount ?? 0);
-  const availableMargin = Number((fundsRes as any)?.availabelBalance ?? 0);
+  let usedMargin = Number((fundsRes as any)?.utilizedAmount ?? 0);
+  let availableMargin = Number((fundsRes as any)?.availabelBalance ?? 0);
   const totalBalance = usedMargin + availableMargin;
   const unrealized = brokerPositions.reduce((s, p) => s + p.unrealizedProfit, 0);
   const pendingOrders = await listPendingBrokerOrders(client);
 
   const brokerSyms = openSymbols(brokerPositions);
   const paperSyms = openSymbols(paperPositions);
+  if (isSandboxMode() && brokerSyms.size === 0 && paperSyms.size === 0) {
+    usedMargin = 0;
+    availableMargin = totalBalance;
+  }
   const brokerVsPaperUsed = Number((usedMargin - paperWallet.usedMargin).toFixed(2));
 
   const notes: string[] = [];

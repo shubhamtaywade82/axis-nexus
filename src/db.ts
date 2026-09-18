@@ -968,7 +968,17 @@ export async function executePaperOrder(input: PaperOrderInput, marginResolver: 
  * to the plain exit cost.
  */
 function findPaperPosition(target: InstrumentKey | string): any | undefined {
-  if (typeof target === 'string') return mem.positions.get(target.toUpperCase());
+  if (typeof target === 'string') {
+    const bySym = mem.positions.get(target.toUpperCase());
+    if (bySym) return bySym;
+    for (const pos of mem.positions.values()) {
+      if (Number(pos.net_qty) === 0) continue;
+      if (String(pos.security_id) === target || String(pos.symbol).toUpperCase() === target.toUpperCase()) {
+        return pos;
+      }
+    }
+    return undefined;
+  }
   for (const pos of mem.positions.values()) {
     if (Number(pos.net_qty) === 0) continue;
     if (String(pos.security_id) === String(target.securityId) && String(pos.exchange_segment) === target.exchangeSegment) {
