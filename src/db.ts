@@ -88,7 +88,7 @@ export function dbMode(): 'postgres' | 'memory' {
 }
 
 // ── in-memory wallet/position cache (always-on, see header) ───────────────
-const mem = {
+export const mem = {
   wallet: { id: 'default', initial_balance: 100000, available_margin: 100000, used_margin: 0, realized_pnl: 0, total_charges: 0, session_realized_base: 0, session_date: null as string | null, updated_at: new Date() },
   orders: [] as any[],
   positions: new Map<string, any>(),
@@ -689,6 +689,24 @@ export async function listPaperOrders() {
     latency: r.latency_ms != null ? `${r.latency_ms}ms` : '—',
     createdAt: r.created_at,
   }));
+}
+
+export async function cancelPaperOrder(orderId: string): Promise<boolean> {
+  let found = false;
+  for (const o of mem.orders) {
+    if ((o.id === orderId || o.correlation_id === orderId) && ['PENDING', 'TRANSIT'].includes(o.status)) {
+      o.status = 'CANCELLED';
+      found = true;
+    }
+  }
+  if (mode === 'postgres') {
+    const res = await pool.query(
+      "UPDATE paper_orders SET status = 'CANCELLED' WHERE (id = $1 OR correlation_id = $1) AND status IN ('PENDING', 'TRANSIT')",
+      [orderId],
+    ).catch(() => ({ rowCount: 0 }));
+    if ((res.rowCount ?? 0) > 0) found = true;
+  }
+  return found;
 }
 
 export async function getTodayOrderStats() {

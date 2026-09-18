@@ -8,6 +8,7 @@ import { redisPublisher } from '../auth';
 import {
   listPaperPositions, getPaperWallet, markPositionsToMarket,
   closePaperPosition, closeAllPaperPositions, getTodayOrderStats as getPaperTodayOrderStats,
+  pushAlert,
 } from '../db';
 import { marketClock } from './marketHours';
 import { buildSandboxPlaceRequest, roundToTick } from './sandboxInstruments';
@@ -433,6 +434,7 @@ export class BrokerPortfolioSource implements PortfolioSource {
       this.lastPollAt = Date.now();
       this.degraded = false;
       this.clearBrokerRateLimit();
+      if (this.brokerMode() === 'sandbox') await this.checkMarginDrift();
     } catch (e: any) {
       this.degraded = true;
       const msg = String(e?.message || e);
@@ -442,6 +444,22 @@ export class BrokerPortfolioSource implements PortfolioSource {
         eventBus.log('WARN', `Broker portfolio poll failed: ${msg} — serving last-known snapshot`, 'portfolio_source');
       }
     }
+  }
+
+  /** Sandbox margin can go stuck-blocked behind orders that never resolve
+   * (DhanHQ's sandbox OMS leaving them in TRANSIT indefinitely) with zero
+   * matching positions anywhere — the dashboard would otherwise just show a
+   * confusing "margin used, no positions" split with no explanation. Throttled
+   * heavily since it costs an extra orders.list() call the normal poll
+   * doesn't need. */
+  private async checkMarginDrift(): Promise<void> {
+    if (!shouldEmitKeyedLog('portfolio_source:margin_drift_check', 5 * 60_000)) return;
+    const paperWallet = await getPaperWallet().catch(() => null);
+    if (!paperWallet) return;
+    const drift = Number((this.cachedWallet.usedMargin - paperWallet.usedMargin).toFixed(2));
+    if (drift <= 100) return;
+    const pending = await listPendingBrokerOrders(this.client).catch(() => []);
+    await pushAlert('WARN', 'portfolio_source', `Sandbox margin drift (current ₹${drift.toLocaleString('en-IN')} blocked, 0 tracked positions, ${pending.length} pending order(s)) — see /api/portfolio/margin/reconcile`);
   }
 
   async getPositions(): Promise<NormalizedPosition[]> {

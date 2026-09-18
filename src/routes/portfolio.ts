@@ -3,7 +3,7 @@ import type { DhanClient } from '@nemesis-oss/dhanhq-sdk';
 import {
   listPaperPositions, listPaperOrders, getPaperWallet, resetPaperWallet,
   closePaperPosition, listPaperStrategies, createPaperStrategy, updatePaperStrategyStatus,
-  defaultMarginResolver, adjustWalletMargin,
+  defaultMarginResolver, adjustWalletMargin, cancelPaperOrder,
 } from '../db';
 import type { MarketDataService } from '../services/marketData';
 import type { RiskEngine } from '../services/riskEngine';
@@ -16,7 +16,7 @@ import type { AgentOrchestrator } from '../services/agent';
 import { isValidSecurityId, keysMatch, toInstrumentKey, type InstrumentKey } from '../lib/instrumentKey';
 import type { PortfolioSource } from '../services/portfolioSource';
 import { buildMarginReconcileReport, buildPaperMarginReconcileReport } from '../services/portfolioSource';
-import { brokerJournalMode, executionBrokerClient, isPaperMode } from '../lib/tradingMode';
+import { brokerJournalMode, executionBrokerClient, isPaperMode, isSandboxMode } from '../lib/tradingMode';
 import { marketClock } from '../services/marketHours';
 import { journal, type JournalEntry } from '../services/journal';
 import {
@@ -36,6 +36,40 @@ async function findPositionByKey(key: InstrumentKey, portfolio?: PortfolioSource
 }
 
 type OrderRow = ReturnType<typeof normalizeBrokerOrder>;
+
+export function formatDhanError(e: any): string {
+  const code = e.errorCode || e.details?.errorCode;
+  const msg = e.errorMessage || e.details?.errorMessage;
+  const detail = [code, msg].filter(Boolean).join(': ');
+  if (detail) return `${detail} (${e.message || 'Dhan API error'})`;
+  return e.message || 'Dhan API request failed';
+}
+
+export async function cancelBrokerOrder(client: DhanClient, orderId: string, isSandbox = false) {
+  try {
+    return await client.orders.cancel(orderId);
+  } catch (err: any) {
+    const resolved = await client.orders.getByCorrelationId(orderId).catch(() => null);
+    if (resolved?.orderId && String(resolved.orderId) !== orderId) {
+      try {
+        return await client.orders.cancel(String(resolved.orderId));
+      } catch (innerErr: any) {
+        err = innerErr;
+      }
+    }
+    // Dhan sandbox OMS leaves orders in TRANSIT permanently and rejects cancel with DH-906.
+    const isTransitError = err.errorCode === 'DH-906'
+      || err.details?.errorCode === 'DH-906'
+      || String(err.errorMessage || err.details?.errorMessage || '').toLowerCase().includes('transit');
+
+    if (isSandbox && isTransitError) {
+      log.warn({ orderId }, 'Sandbox order stuck in TRANSIT on DhanHQ OMS — cleared locally');
+      return { orderId, orderStatus: 'CANCELLED', clearedTransit: true };
+    }
+
+    throw err;
+  }
+}
 
 function mapBrokerStatus(status: string): string {
   if (status === 'TRANSIT') return 'PENDING';
@@ -138,10 +172,24 @@ async function listBrokerOrders(client: DhanClient, mode: 'sandbox' | 'live' = '
     .filter((r) => !r.createTime || String(r.createTime).startsWith(today))
     .map(normalizeBrokerOrder);
 
+  const cancelledKeys = new Set<string>();
+  for (const e of journal.readTodayEntries()) {
+    if (e.kind === 'order_result' && e.payload?.status === 'CANCELLED') {
+      if (e.payload.order_id) cancelledKeys.add(String(e.payload.order_id));
+      if (e.payload.correlation_id) cancelledKeys.add(String(e.payload.correlation_id));
+    }
+  }
+
   const merged = new Map<string, OrderRow>();
-  for (const row of broker) merged.set(row.corr || row.id, row);
+  for (const row of broker) {
+    if (cancelledKeys.has(row.id) || (row.corr && cancelledKeys.has(row.corr))) {
+      row.status = 'CANCELLED';
+      row.reason = 'Cancelled by operator';
+    }
+    merged.set(row.corr || row.id, row);
+  }
   for (const row of journalOrderRows(mode)) {
-    if (!merged.has(row.corr)) merged.set(row.corr, row);
+    if (!merged.has(row.corr) && !merged.has(row.id)) merged.set(row.corr || row.id, row);
   }
 
   return [...merged.values()].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
@@ -213,6 +261,71 @@ export function portfolioRoutes(
     } catch (e: any) {
       log.warn({ requestId: req.id, err: { message: e.message }, resource: 'orders' }, 'Orders fetch failed');
       res.json([]);
+    }
+  });
+
+  router.post('/orders/cancel-all', async (req, res) => {
+    try {
+      if (isLocalPaper() || req.query.mode === 'paper') {
+        const pending = (await listPaperOrders()).filter((o) => ['PENDING', 'TRANSIT', 'OPEN'].includes(o.status));
+        for (const o of pending) await cancelPaperOrder(o.id);
+        return res.json({ cancelledCount: pending.length });
+      }
+      const raw = await brokerApiClient().orders.list().catch(() => []);
+      const pending = (Array.isArray(raw) ? raw : [])
+        .filter((r) => ['PENDING', 'TRANSIT', 'OPEN'].includes(String(r.orderStatus ?? '')));
+      let count = 0;
+      for (const ord of pending) {
+        const id = String(ord.orderId ?? '');
+        if (!id) continue;
+        try {
+          await cancelBrokerOrder(brokerApiClient(), id, isSandboxMode());
+          journal.append('order_result', {
+            order_id: id,
+            correlation_id: ord.correlationId ? String(ord.correlationId) : undefined,
+            status: 'CANCELLED',
+            reason: 'Cancel all via control plane',
+            mode: brokerJournalMode(),
+          });
+          count++;
+        } catch { /* proceed with remaining orders */ }
+      }
+      res.json({ cancelledCount: count });
+    } catch (e: any) {
+      const formatted = formatDhanError(e);
+      log.warn({ requestId: req.id, err: { message: formatted } }, 'Cancel all orders failed');
+      res.status(500).json({ error: formatted });
+    }
+  });
+
+  router.post('/orders/:id/cancel', async (req, res) => {
+    try {
+      const orderId = String(req.params.id);
+      const corr = req.body?.correlationId ? String(req.body.correlationId) : undefined;
+      if (!orderId) {
+        return res.status(400).json({ error: 'Order ID is required' });
+      }
+      if (isLocalPaper() || req.query.mode === 'paper') {
+        const cancelled = await cancelPaperOrder(orderId);
+        if (!cancelled) {
+          return res.status(404).json({ error: `Paper order ${orderId} not found or not in PENDING state` });
+        }
+        return res.json({ orderId, orderStatus: 'CANCELLED' });
+      }
+      const result = await cancelBrokerOrder(brokerApiClient(), orderId, isSandboxMode());
+      journal.append('order_result', {
+        order_id: orderId,
+        correlation_id: corr,
+        status: 'CANCELLED',
+        reason: 'Cancelled via control plane',
+        mode: brokerJournalMode(),
+      });
+      eventBus.emit('order', { kind: 'cancel', orderId, correlationId: corr });
+      res.json(result);
+    } catch (e: any) {
+      const formatted = formatDhanError(e);
+      log.warn({ requestId: req.id, orderId: req.params.id, err: { message: formatted } }, 'Order cancel failed');
+      res.status(422).json({ error: formatted });
     }
   });
 
