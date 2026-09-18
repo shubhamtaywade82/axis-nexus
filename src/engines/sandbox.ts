@@ -208,7 +208,8 @@ export class SandboxExecutionEngine {
         stopLoss: risk_limits?.stop_loss,
         target: risk_limits?.target,
         trailingStop: risk_limits?.trailing_stop,
-      }, async () => 0).catch(() => {});
+        tradingMode: 'sandbox',
+      }, async () => 0, 'sandbox').catch(() => {});
 
       if (risk_limits && (risk_limits.stop_loss || risk_limits.trailing_stop || risk_limits.target)) {
         this.market.monitor.track({
@@ -261,7 +262,7 @@ export class SandboxExecutionEngine {
       productType: 'INTRADAY',
     })).catch(() => null);
     const orderId = placed?.data?.orderId || `sbx_u_${Date.now().toString(36)}`;
-    await closePaperPosition({ securityId: String(leg.securityId), exchangeSegment: leg.exchangeSegment || 'NSE_FNO' }, price, async () => 0, 'EXIT').catch(() => {});
+    await closePaperPosition({ securityId: String(leg.securityId), exchangeSegment: leg.exchangeSegment || 'NSE_FNO' }, price, async () => 0, 'EXIT', 'sandbox').catch(() => {});
     this.risk.getPortfolio().invalidate();
     return { status: 'TRADED', orderId };
   }

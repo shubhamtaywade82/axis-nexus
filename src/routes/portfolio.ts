@@ -211,7 +211,7 @@ export function portfolioRoutes(
   router.get('/summary', async (req, res) => {
     try {
       const [positions, wallet, strategies, orders] = isLocalPaper()
-        ? await Promise.all([listPaperPositions(), getPaperWallet(), listPaperStrategies(), listPaperOrders()])
+        ? await Promise.all([listPaperPositions('paper'), getPaperWallet('paper'), listPaperStrategies(), listPaperOrders(100, 'paper')])
         : await Promise.all([
           portfolio!.getPositions(),
           portfolio!.getWallet(),
@@ -242,7 +242,7 @@ export function portfolioRoutes(
   router.get('/positions', async (req, res) => {
     try {
       if (isLocalPaper() || req.query.mode === 'paper') {
-        return res.json(await listPaperPositions());
+        return res.json(await listPaperPositions('paper'));
       }
       res.json(await portfolio!.getPositions());
     } catch (e: any) {
@@ -254,7 +254,7 @@ export function portfolioRoutes(
   router.get('/orders', async (req, res) => {
     try {
       if (isLocalPaper() || req.query.mode === 'paper') {
-        return res.json(await listPaperOrders());
+        return res.json(await listPaperOrders(100, 'paper'));
       }
       const mode = brokerJournalMode();
       res.json(await listBrokerOrders(brokerApiClient(), mode));
@@ -267,7 +267,7 @@ export function portfolioRoutes(
   router.post('/orders/cancel-all', async (req, res) => {
     try {
       if (isLocalPaper() || req.query.mode === 'paper') {
-        const pending = (await listPaperOrders()).filter((o) => ['PENDING', 'TRANSIT', 'OPEN'].includes(o.status));
+        const pending = (await listPaperOrders(100, 'paper')).filter((o) => ['PENDING', 'TRANSIT', 'OPEN'].includes(o.status));
         for (const o of pending) await cancelPaperOrder(o.id);
         return res.json({ cancelledCount: pending.length });
       }
@@ -332,7 +332,7 @@ export function portfolioRoutes(
   router.get('/funds', async (req, res) => {
     try {
       if (isLocalPaper() || req.query.mode === 'paper') {
-        return res.json(await getPaperWallet());
+        return res.json(await getPaperWallet('paper'));
       }
       res.json(await portfolio!.getWallet());
     } catch (e: any) {
@@ -344,7 +344,7 @@ export function portfolioRoutes(
   router.get('/trades', async (req, res) => {
     try {
       if (isLocalPaper() || req.query.mode === 'paper') {
-        const orders = await listPaperOrders();
+        const orders = await listPaperOrders(100, 'paper');
         return res.json(orders.filter((o) => o.status === 'TRADED'));
       }
       const trades = await brokerApiClient().orders.listTrades().catch(() => []);
@@ -484,8 +484,9 @@ export function portfolioRoutes(
         return res.status(400).json({ error: parsed.success ? 'empty body' : zodError(parsed.error) });
       }
       const { initialBalance } = parsed.data;
-      const result = await resetPaperWallet(initialBalance);
-      eventBus.log('WARN', `Paper wallet reset to ₹${initialBalance.toLocaleString('en-IN')} (positions cleared)`, 'wallet_admin');
+      const targetMode = ((req.query.mode || req.body?.tradingMode) as string) || 'paper';
+      const result = await resetPaperWallet(initialBalance, targetMode);
+      eventBus.log('WARN', `${targetMode === 'sandbox' ? 'Sandbox' : 'Paper'} wallet reset to ₹${initialBalance.toLocaleString('en-IN')} (positions cleared)`, 'wallet_admin');
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

@@ -203,15 +203,15 @@ export class PaperPortfolioSource implements PortfolioSource {
   readonly kind = 'paper' as const;
 
   async getPositions(): Promise<NormalizedPosition[]> {
-    return listPaperPositions() as unknown as Promise<NormalizedPosition[]>;
+    return listPaperPositions('paper') as unknown as Promise<NormalizedPosition[]>;
   }
 
   async getWallet(): Promise<WalletSnapshot> {
-    return getPaperWallet();
+    return getPaperWallet('paper');
   }
 
   async getTodayOrderStats(): Promise<OrderFlowStats> {
-    return getPaperTodayOrderStats();
+    return getPaperTodayOrderStats('paper');
   }
 
   /** No-op: db.ts's executePaperOrder already writes every fill/rejection
@@ -220,16 +220,16 @@ export class PaperPortfolioSource implements PortfolioSource {
   recordOrderOutcome(): void { /* see docstring */ }
 
   async markToMarket(ltpResolver: LtpResolver) {
-    return markPositionsToMarket(ltpResolver);
+    return markPositionsToMarket(ltpResolver, 'paper');
   }
 
   async closePosition(key: InstrumentKey, priceHint?: number, kind?: FillKind, _quantity?: number, tradingSymbol?: string): Promise<CloseResult> {
     const target = !isValidSecurityId(key.securityId) && tradingSymbol ? tradingSymbol : key;
-    return closePaperPosition(target, priceHint, undefined, kind) as unknown as Promise<CloseResult>;
+    return closePaperPosition(target, priceHint, undefined, kind, 'paper') as unknown as Promise<CloseResult>;
   }
 
   async closeAll(ltpResolver: LtpResolver): Promise<CloseResult[]> {
-    return closeAllPaperPositions(ltpResolver) as unknown as Promise<CloseResult[]>;
+    return closeAllPaperPositions(ltpResolver, 'paper') as unknown as Promise<CloseResult[]>;
   }
 
   isOpenOnBroker(_pos: Pick<NormalizedPosition, 'tradingSymbol' | 'securityId' | 'exchangeSegment'>): boolean {
@@ -469,7 +469,7 @@ export class BrokerPortfolioSource implements PortfolioSource {
    * doesn't need. */
   private async checkMarginDrift(): Promise<void> {
     if (!shouldEmitKeyedLog('portfolio_source:margin_drift_check', 5 * 60_000)) return;
-    const paperWallet = await getPaperWallet().catch(() => null);
+    const paperWallet = await getPaperWallet('sandbox').catch(() => null);
     if (!paperWallet) return;
     const drift = Number((this.cachedWallet.usedMargin - paperWallet.usedMargin).toFixed(2));
     if (drift <= 100) return;
@@ -487,7 +487,7 @@ export class BrokerPortfolioSource implements PortfolioSource {
    * ledger. Merging both avoids reconcileMonitor seeing a tracked monitor
    * entry with "no matching open position" when broker and paper disagree. */
   private async mergeSandboxPositions(): Promise<NormalizedPosition[]> {
-    const paper = (await listPaperPositions()).filter((p) => p.netQty !== 0);
+    const paper = (await listPaperPositions('sandbox')).filter((p) => p.netQty !== 0);
     const brokerOpen = this.cachedPositions.filter((p) => p.netQty !== 0);
     if (brokerOpen.length === 0) return paper as unknown as NormalizedPosition[];
     const byKey = new Map(brokerOpen.map((p) => [`${p.exchangeSegment}:${p.securityId}`, { ...p }]));
@@ -518,17 +518,31 @@ export class BrokerPortfolioSource implements PortfolioSource {
    * bug: it made "Sandbox Net Worth" show the paper book's ~₹1L basis
    * instead of the broker's real ~₹10L sandbox allocation.
    *
-   * The one exception: when NOTHING is open anywhere (paper or broker),
-   * DhanHQ's sandbox funds API is known to keep reporting a stale
+   * The one exception: when the BROKER's own positions.list() says nothing
+   * is open, DhanHQ's sandbox funds API is known to keep reporting a stale
    * utilizedAmount for orders stuck forever in TRANSIT (see
-   * /api/portfolio/margin/reconcile) — zeroing usedMargin here is reading
+   * /api/portfolio/margin/reconcile) — zeroing usedMargin then is reading
    * "nothing is actually blocking capital" correctly, not overriding a
    * trustworthy number. checkMarginDrift() alerts when this fires so the
-   * drift stays visible instead of silently vanishing. */
+   * drift stays visible instead of silently vanishing.
+   *
+   * Gated on brokerOpen ALONE, not paperOpen too — sandbox mode fills land
+   * on the local paper ledger far more reliably than at the broker (paper
+   * simulates every fill; the broker leg can silently never confirm), so
+   * requiring paperOpen===0 as well almost never triggered while any
+   * strategy was trading, and the corrupted broker figure leaked straight
+   * through to the risk engine for hours. Broker's own internal
+   * self-contradiction (0 positions, nonzero margin) is what's being
+   * corrected — the local paper book is irrelevant to whether the BROKER
+   * itself is lying about the broker's own money. */
   private async sandboxWallet(brokerWallet: WalletSnapshot): Promise<WalletSnapshot> {
-    const paperOpen = (await listPaperPositions()).filter((p) => Number(p.netQty ?? 0) !== 0);
     const brokerOpen = this.cachedPositions.filter((p) => p.netQty !== 0);
-    if (paperOpen.length > 0 || brokerOpen.length > 0) return brokerWallet;
+    const paperOpen = (await listPaperPositions('sandbox')).filter((p) => Number(p.netQty ?? 0) !== 0);
+    if (brokerOpen.length === 0 && paperOpen.length > 0) {
+      const pw = await getPaperWallet('sandbox').catch(() => null);
+      if (pw) return pw;
+    }
+    if (brokerOpen.length > 0) return brokerWallet;
     const total = brokerWallet.totalBalance || (brokerWallet.availableMargin + brokerWallet.usedMargin);
     return { ...brokerWallet, usedMargin: 0, availableMargin: total, totalBalance: total, equity: total };
   }
@@ -576,13 +590,13 @@ export class BrokerPortfolioSource implements PortfolioSource {
 
   async markToMarket(ltpResolver: LtpResolver): Promise<{ totalUnrealized: number; staleCount: number }> {
     if (this.brokerMode() === 'sandbox') {
-      const mark = await markPositionsToMarket(ltpResolver);
+      const mark = await markPositionsToMarket(ltpResolver, 'sandbox');
       await this.maybeRefreshBrokerSnapshot(false);
       const brokerUnrealized = markBrokerPositionsToMarket(this.cachedPositions, ltpResolver);
       const brokerOpen = this.cachedPositions.filter((p) => p.netQty !== 0);
-      const paperOpen = (await listPaperPositions()).filter((p) => Number(p.netQty ?? 0) !== 0);
+      const paperOpen = (await listPaperPositions('sandbox')).filter((p) => Number(p.netQty ?? 0) !== 0);
       if (brokerOpen.length === 0 && paperOpen.length > 0) {
-        const pw = await getPaperWallet().catch(() => null);
+        const pw = await getPaperWallet('sandbox').catch(() => null);
         if (pw) {
           this.cachedWallet.usedMargin = Number(pw.usedMargin);
           this.cachedWallet.availableMargin = Number(pw.availableMargin);
@@ -636,7 +650,7 @@ export class BrokerPortfolioSource implements PortfolioSource {
   private async closeSandboxPaperOnly(pos: NormalizedPosition, reason: string): Promise<CloseResult> {
     const fallbackPrice = pos.costPrice || pos.buyAvg || pos.sellAvg || 100;
     const limitPrice = roundToTick(pos.ltp > 0 ? pos.ltp : fallbackPrice, 5);
-    const paperClose = await closePaperPosition(toInstrumentKey(pos), limitPrice, async () => 0, 'EXIT');
+    const paperClose = await closePaperPosition(toInstrumentKey(pos), limitPrice, async () => 0, 'EXIT', 'sandbox');
     if (paperClose.status !== 'TRADED') {
       return { status: 'REJECTED', symbol: pos.tradingSymbol, reason: paperClose.message || 'Paper close failed' };
     }
@@ -712,7 +726,7 @@ export class BrokerPortfolioSource implements PortfolioSource {
       redisPublisher.publish('dhan:execution:fills', JSON.stringify(fillPayload)).catch(() => {});
 
       if (mode === 'sandbox') {
-        await closePaperPosition(toInstrumentKey(pos), limitPrice, async () => 0, 'EXIT').catch(() => {});
+        await closePaperPosition(toInstrumentKey(pos), limitPrice, async () => 0, 'EXIT', 'sandbox').catch(() => {});
       }
 
       this.invalidate();
