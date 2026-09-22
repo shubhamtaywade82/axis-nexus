@@ -21,6 +21,7 @@ import { attachBusLoggerBridge } from './lib/busLoggerBridge';
 import { clientLogsRoutes } from './routes/clientLogs';
 import { researchRoutes } from './routes/research';
 import { scalpRoutes } from './routes/scalp';
+import { expertTradesRoutes } from './routes/expertTrades';
 import { extractBearer, safeTokenCompare } from './lib/authToken';
 import { writeLimiter, agentRunLimiter } from './lib/rateLimiters';
 
@@ -181,6 +182,7 @@ async function main() {
   app.use('/api/client-logs', clientLogsRoutes());
   app.use('/api/research', researchRoutes(core.research, core.researchScheduler));
   app.use('/api/scalp', writeLimiter, scalpRoutes(core.scalp));
+  app.use('/api/expert-trades', writeLimiter, expertTradesRoutes(core.expertTrades));
 
   app.get('/api/health', (_req, res) => {
     res.json({

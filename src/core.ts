@@ -24,6 +24,8 @@ import { ResearchScheduler } from './services/research/researchScheduler';
 import { initResearchRepository } from './services/research/researchRepository';
 import { ScalpPositionManager } from './services/scalpPositionManager';
 import { ScalpScanner } from './services/scalpScanner';
+import { ExpertTradeEngine } from './services/expertTrades/expertTradeEngine';
+import { initExpertTradeRepository } from './services/expertTrades/repository';
 
 /**
  * Core bootstrap — the autonomous trading stack, shared by every entry
@@ -40,6 +42,7 @@ export interface Core {
   agent: AgentOrchestrator;
   research: ResearchOrchestrator;
   researchScheduler?: ResearchScheduler;
+  expertTrades: ExpertTradeEngine;
   paper: PaperExecutionEngine;
   live: LiveExecutionEngine;
   sandbox?: SandboxExecutionEngine;
@@ -154,6 +157,15 @@ export async function startCore(): Promise<Core> {
   const researchScheduler = new ResearchScheduler(research);
   await researchScheduler.start();
 
+  // NSE Equity Expert Trade Engine — deterministic setup/entry/stop/target
+  // pipeline, separate from (and downstream of) the research subsystem's
+  // qualitative bias/conviction signal. Lifecycle re-evaluation only; scans
+  // are triggered on demand via POST /api/expert-trades/scan (a full-NSE
+  // scan is too expensive to run unconditionally on every boot).
+  await initExpertTradeRepository();
+  const expertTrades = new ExpertTradeEngine(client, market);
+  expertTrades.start();
+
   // Bridge core events into Redis pub/sub (Rails sidecar compat) when up.
   if (await redisAvailable()) {
     eventBus.setRedisSink(async (channel, message) => {
@@ -218,7 +230,7 @@ export async function startCore(): Promise<Core> {
   eventBus.emit('system', { type: 'boot', mode });
   eventBus.log('SYSTEM', `Core stack online (mode=${mode}: ${describeModeContract()}) — backend is autonomous; frontend optional`, 'core');
 
-  return { client, sandboxClient, portfolio, market, risk, autonomy, agent, research, researchScheduler, paper, live, sandbox, tracker, selfHealing, scalp, scalpScanner };
+  return { client, sandboxClient, portfolio, market, risk, autonomy, agent, research, researchScheduler, expertTrades, paper, live, sandbox, tracker, selfHealing, scalp, scalpScanner };
 }
 
 /**

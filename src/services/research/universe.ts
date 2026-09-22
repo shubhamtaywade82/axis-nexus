@@ -32,6 +32,13 @@ const TEST_SYMBOL = /NSETEST/i;
 
 export const FNO_UNIVERSE_ID = 'FNO_UNDERLYINGS';
 
+/** Every NSE_EQ 'EQ'-series listing in the scrip master — the full cash
+ * universe, not a curated subset. Intentionally not filtered by liquidity
+ * here (that stays a screening concern); callers that fan this out into
+ * per-symbol historical fetches (the Expert Trade engine) should bound how
+ * much of it they actually process in one pass. */
+export const NSE_ALL_EQUITIES_ID = 'NSE_ALL_EQUITIES';
+
 interface ThematicDef { id: string; name: string; description: string; symbols: string[] }
 
 const THEMATIC: Record<string, ThematicDef> = {
@@ -118,7 +125,9 @@ export async function resolveUniverse(
   const equities = await equityRows(client, exchange);
   const symbols = id === FNO_UNIVERSE_ID
     ? await fnoUnderlyingSymbols(client)
-    : (THEMATIC[id] || THEMATIC.FNO_HEAVYWEIGHTS).symbols;
+    : id === NSE_ALL_EQUITIES_ID
+      ? [...equities.keys()].sort()
+      : (THEMATIC[id] || THEMATIC.FNO_HEAVYWEIGHTS).symbols;
 
   const refs: InstrumentRef[] = [];
   for (const symbol of symbols) {
@@ -153,6 +162,12 @@ export async function listUniverses(client: any, exchange: ExchangePreference = 
       name: 'F&O Underlyings (live)',
       description: `Every stock with listed derivatives, resolved from the ${exchange} scrip master`,
       count: countResolvable(fnoSymbols),
+    },
+    {
+      id: NSE_ALL_EQUITIES_ID,
+      name: 'All NSE Equities (live)',
+      description: `Every 'EQ'-series cash listing on the ${exchange} scrip master`,
+      count: equities.size,
     },
     ...Object.values(THEMATIC).map((u) => ({
       id: u.id, name: u.name, description: u.description, count: countResolvable(u.symbols),
