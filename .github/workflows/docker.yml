@@ -70,4 +70,5 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           vuln-type: os,library
+          trivyignores: .trivyignore
         if: always()
