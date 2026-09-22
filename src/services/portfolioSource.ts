@@ -511,12 +511,11 @@ export class BrokerPortfolioSource implements PortfolioSource {
     return this.sandboxWallet(this.cachedWallet);
   }
 
-  /** Sandbox net worth/margin is the DhanHQ sandbox account, full stop —
-   * the local paper ledger has its own separate starting capital and is
-   * ONLY the store for SL/target/trailing-stop metadata (mergeSandboxPositions),
-   * never for money. Blending the paper ledger's own P&L in here was the
-   * bug: it made "Sandbox Net Worth" show the paper book's ~₹1L basis
-   * instead of the broker's real ~₹10L sandbox allocation.
+  /** Margin/available/totalBalance are the DhanHQ sandbox account, full
+   * stop — that's real broker-allocated capital, and blending the paper
+   * ledger's own capital tracking into THOSE fields was the past bug: it
+   * made "Sandbox Net Worth" show the paper book's ~₹1L basis instead of
+   * the broker's real ~₹10L sandbox allocation.
    *
    * The one exception: when the BROKER's own positions.list() says nothing
    * is open, DhanHQ's sandbox funds API is known to keep reporting a stale
@@ -534,17 +533,42 @@ export class BrokerPortfolioSource implements PortfolioSource {
    * through to the risk engine for hours. Broker's own internal
    * self-contradiction (0 positions, nonzero margin) is what's being
    * corrected — the local paper book is irrelevant to whether the BROKER
-   * itself is lying about the broker's own money. */
+   * itself is lying about the broker's own money.
+   *
+   * P&L/equity, unlike margin, are ALWAYS taken from the local ledger
+   * (`paper_wallet id='sandbox'`) regardless of which branch above ran.
+   * DhanHQ's sandbox funds API resets to its default allocation daily, and
+   * positions.list() drops closed legs entirely — so broker-derived
+   * realized P&L reads ₹0 the moment a strategy goes flat, even after a
+   * day of real trading. The local ledger accumulates realized_pnl
+   * fill-by-fill via executePaperOrder() on every sandbox order (real
+   * broker fill or DH-905 mock fallback alike, see sandbox.ts), is durable
+   * across restarts, and is never touched by DhanHQ's own reset — it's the
+   * only number here that reflects true performance across sessions. */
   private async sandboxWallet(brokerWallet: WalletSnapshot): Promise<WalletSnapshot> {
     const brokerOpen = this.cachedPositions.filter((p) => p.netQty !== 0);
     const paperOpen = (await listPaperPositions('sandbox')).filter((p) => Number(p.netQty ?? 0) !== 0);
-    if (brokerOpen.length === 0 && paperOpen.length > 0) {
-      const pw = await getPaperWallet('sandbox').catch(() => null);
-      if (pw) return pw;
+    const ledger = await getPaperWallet('sandbox').catch(() => null);
+
+    let base: WalletSnapshot;
+    if (brokerOpen.length === 0 && paperOpen.length > 0 && ledger) {
+      base = ledger;
+    } else if (brokerOpen.length === 0 && paperOpen.length === 0) {
+      const total = brokerWallet.totalBalance || (brokerWallet.availableMargin + brokerWallet.usedMargin);
+      base = { ...brokerWallet, usedMargin: 0, availableMargin: total, totalBalance: total, equity: total };
+    } else {
+      base = brokerWallet;
     }
-    if (brokerOpen.length > 0) return brokerWallet;
-    const total = brokerWallet.totalBalance || (brokerWallet.availableMargin + brokerWallet.usedMargin);
-    return { ...brokerWallet, usedMargin: 0, availableMargin: total, totalBalance: total, equity: total };
+    if (!ledger) return base;
+    return {
+      ...base,
+      realizedPnl: ledger.realizedPnl,
+      sessionRealizedPnl: ledger.sessionRealizedPnl,
+      netRealizedPnl: ledger.netRealizedPnl,
+      totalCharges: ledger.totalCharges,
+      unrealizedPnl: ledger.unrealizedPnl,
+      equity: ledger.equity,
+    };
   }
 
   /** Compares this poll's realizedProfit per symbol against the last poll's

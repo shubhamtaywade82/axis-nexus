@@ -224,8 +224,18 @@ export function portfolioRoutes(
         if (data?.ltp) spotMap[sym] = data.ltp;
       }
       const greeks = aggregatePortfolioGreeks(positions, spotMap, new Date().toISOString().slice(0, 10));
+      // Sandbox `wallet` intentionally mirrors DhanHQ's broker-side funds,
+      // which DhanHQ resets to its default allocation every day — see
+      // portfolioSource.sandboxWallet(). `ledgerWallet` is the app's own
+      // fill-by-fill ledger (paper_wallet id='sandbox'), which is never
+      // touched by that reset, so it's the number to use for performance
+      // tracking across sessions.
+      const ledgerWallet = (!isLocalPaper() && isSandboxMode())
+        ? await getPaperWallet('sandbox').catch(() => null)
+        : null;
       res.json({
         wallet,
+        ledgerWallet,
         positions,
         strategies,
         ordersCount: orders.length,
@@ -486,7 +496,7 @@ export function portfolioRoutes(
       const { initialBalance } = parsed.data;
       const targetMode = ((req.query.mode || req.body?.tradingMode) as string) || 'paper';
       const result = await resetPaperWallet(initialBalance, targetMode);
-      eventBus.log('WARN', `${targetMode === 'sandbox' ? 'Sandbox' : 'Paper'} wallet reset to ₹${initialBalance.toLocaleString('en-IN')} (positions cleared)`, 'wallet_admin');
+      eventBus.log('WARN', `${targetMode === 'sandbox' ? 'Sandbox' : 'Paper'} wallet reset to ₹${result.initialBalance.toLocaleString('en-IN')} (positions cleared)`, 'wallet_admin');
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

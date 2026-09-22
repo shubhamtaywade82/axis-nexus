@@ -90,7 +90,9 @@ export const ClosePositionSchema = InstrumentKeySchema.extend({
 }).strict();
 
 export const WalletResetSchema = z.object({
-  initialBalance: z.number().positive().min(1000).optional().default(100000),
+  // No default here: resetPaperWallet() applies its own mode-aware default
+  // (₹10,00,000 for sandbox, ₹1,00,000 for paper) when this is omitted.
+  initialBalance: z.number().positive().min(1000).optional(),
 }).strict().optional();
 
 export const StrategyDeploySchema = z.object({
