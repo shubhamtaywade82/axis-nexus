@@ -19,6 +19,7 @@ import { Alerts } from "./pages/Alerts";
 import { Logs } from "./pages/Logs";
 import { Config } from "./pages/Config";
 import { ResearchConsole } from "./pages/ResearchConsole";
+import { ExpertTrades } from "./pages/ExpertTrades";
 import { ScalpMonitor } from "./pages/ScalpMonitor";
 import { OptionsScalpingSimulator } from "./pages/OptionsScalpingSimulator";
 import { api } from "./services/api";
@@ -33,6 +34,7 @@ const PAGE_TITLES: Record<string, [string, string]> = {
   orders: ["Order Book", "FULL AUDIT TRAIL"],
   "agent-console": ["Agent Console", "REACT MULTI-AGENT LOOP"],
   "research-console": ["Research Console", "INSTITUTIONAL EQUITY INTELLIGENCE"],
+  "expert-trades": ["Expert Trades", "NSE EQUITY SETUP · ENTRY · STOP · TARGET"],
   "scalp-monitor": ["Scalp Monitor", "FEE-AWARE BOTH-SIDE RATCHET"],
   "scalp-simulator": ["Scalp Simulator", "CHART.JS VISUALIZATION"],
   "agent-monitor": ["Ops Telemetry", "AGENT INTERNAL METRICS"],
@@ -182,6 +184,8 @@ function AppInner() {
         return <AgentConsole />;
       case "research-console":
         return <ResearchConsole />;
+      case "expert-trades":
+        return <ExpertTrades />;
       case "scalp-monitor":
         return <ScalpMonitor />;
       case "scalp-simulator":

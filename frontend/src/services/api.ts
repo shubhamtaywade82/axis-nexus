@@ -1,4 +1,5 @@
 import { log } from './logger';
+import type { ExpertTrade, ExpertTradeScanSummary, ExpertTradeSchedulerStatus, ExpertTradeStatsResponse } from '../types/expertTrades';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -248,4 +249,22 @@ export const api = {
   researchSchedulerStatus: () => request<any>('/api/research/scheduler/status'),
   researchSchedulerTrigger: (phase: string) =>
     request<any>('/api/research/scheduler/trigger', { method: 'POST', body: JSON.stringify({ phase }) }),
+
+  // Expert Trades — NSE equity trade-idea engine (deterministic entry/stop/target)
+  expertTrades: (state?: string, horizon?: string, limit = 50) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (state) params.set('state', state);
+    if (horizon) params.set('horizon', horizon);
+    return request<{ count: number; trades: ExpertTrade[] }>(`/api/expert-trades?${params.toString()}`);
+  },
+  expertTradesPast: (limit = 50) =>
+    request<{ count: number; trades: ExpertTrade[] }>(`/api/expert-trades/past?limit=${limit}`),
+  expertTradeStats: () => request<ExpertTradeStatsResponse>('/api/expert-trades/stats'),
+  expertTradeScannerStatus: () => request<ExpertTradeScanSummary | { scannedAt: null; message: string }>('/api/expert-trades/scanner/status'),
+  expertTradeSchedulerStatus: () => request<ExpertTradeSchedulerStatus>('/api/expert-trades/scheduler/status'),
+  expertTradeScan: (universe?: string, exchange = 'NSE', maxUniverse?: number, maxPublished?: number) =>
+    request<ExpertTradeScanSummary>('/api/expert-trades/scan', { method: 'POST', body: JSON.stringify({ universe, exchange, maxUniverse, maxPublished }) }),
+  expertTradesForSymbol: (symbol: string) =>
+    request<{ count: number; trades: ExpertTrade[] }>(`/api/expert-trades/symbol/${symbol}`),
+  expertTrade: (id: string) => request<ExpertTrade>(`/api/expert-trades/${id}`),
 };

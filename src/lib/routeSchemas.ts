@@ -139,11 +139,15 @@ export function zodError(err: z.ZodError): string {
 // subscription set to empty with no feedback to the client. Schemas make
 // the protocol explicit and reject unknown shapes with a typed error.
 
-const WS_CHANNELS = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'] as const;
+const WS_CHANNELS = ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp', 'expert_trade'] as const;
 
 export const WsSubscribeSchema = z.object({
   type: z.literal('subscribe'),
-  channels: z.array(z.enum(WS_CHANNELS)).min(1).max(8).optional(),
+  // Was max(8) with 9 channels already defined above it (tick..scalp), which
+  // would have rejected the frontend's own "subscribe to everything"
+  // default; bumped to match the full channel count now that expert_trade
+  // is the 10th.
+  channels: z.array(z.enum(WS_CHANNELS)).min(1).max(10).optional(),
 }).strict();
 
 export const WsUnsubscribeSchema = z.object({

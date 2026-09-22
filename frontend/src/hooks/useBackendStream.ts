@@ -13,7 +13,7 @@ import { wsUrlWithToken } from '../services/api';
  * The default URL matches the backend server (port 3003, path /ws).
  */
 
-export type Channel = 'tick' | 'log' | 'alert' | 'telemetry' | 'risk' | 'portfolio' | 'order' | 'system' | 'scalp';
+export type Channel = 'tick' | 'log' | 'alert' | 'telemetry' | 'risk' | 'portfolio' | 'order' | 'system' | 'scalp' | 'expert_trade';
 
 export interface Envelope {
   channel: Channel;
@@ -65,7 +65,7 @@ export function useBackendStream(
         log.info('Telemetry stream connected', { source: 'ws' });
         ws.send(JSON.stringify({
           type: 'subscribe',
-          channels: channelsRef.current ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'],
+          channels: channelsRef.current ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp', 'expert_trade'],
         }));
       };
 
@@ -110,7 +110,7 @@ export function useBackendStream(
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'subscribe',
-        channels: channelsRef.current ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp'],
+        channels: channelsRef.current ?? ['tick', 'log', 'alert', 'telemetry', 'risk', 'portfolio', 'order', 'system', 'scalp', 'expert_trade'],
       }));
     }
   }, [channelsKey]);
