@@ -3,10 +3,11 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Select } from '../components/ui/Select';
 import { ExpertTradeCard } from '../components/expertTrades/ExpertTradeCard';
+import { TradePerformance } from '../components/expertTrades/TradePerformance';
 import { api } from '../services/api';
 import { useApp } from '../store/AppContext';
 import { RefreshCw, Search } from 'lucide-react';
-import type { ExpertTrade, ExpertTradeHorizon, ExpertTradeScanSummary } from '../types/expertTrades';
+import type { ExpertTrade, ExpertTradeHorizon, ExpertTradeScanSummary, ExpertTradeStatsResponse } from '../types/expertTrades';
 
 type Tab = 'open' | 'past';
 
@@ -25,14 +26,19 @@ export function ExpertTrades() {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [status, setStatus] = useState<ExpertTradeScanSummary | null>(null);
+  const [stats, setStats] = useState<ExpertTradeStatsResponse | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = tab === 'open'
-        ? await api.expertTrades(undefined, horizon === 'ALL' ? undefined : horizon)
-        : await api.expertTradesPast();
-      setTrades(res.trades);
+      if (tab === 'open') {
+        const res = await api.expertTrades(undefined, horizon === 'ALL' ? undefined : horizon);
+        setTrades(res.trades);
+      } else {
+        const [past, statsRes] = await Promise.all([api.expertTradesPast(), api.expertTradeStats()]);
+        setTrades(past.trades);
+        setStats(statsRes);
+      }
     } catch (e: any) {
       showToast(`Failed to load expert trades: ${e.message}`, 'error');
     } finally {
@@ -105,6 +111,8 @@ export function ExpertTrades() {
           </button>
         ))}
       </div>
+
+      {tab === 'past' && stats && <TradePerformance overall={stats.overall} bySetup={stats.bySetup} />}
 
       {trades.length === 0 ? (
         <Card className="p-8 text-center text-muted text-xs">

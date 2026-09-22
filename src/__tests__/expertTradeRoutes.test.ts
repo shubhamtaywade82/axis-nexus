@@ -80,6 +80,18 @@ describe('Expert Trades Routes HTTP API', () => {
     expect(data.trades.map((t: any) => t.symbol)).toEqual(['RELIANCE']);
   });
 
+  it('GET /stats returns outcome analytics computed from every closed trade', async () => {
+    const res = await fetch(`${baseUrl}/stats`);
+    expect(res.status).toBe(200);
+    const data: any = await res.json();
+    expect(data.overall).toBeDefined();
+    expect(data.overall.setupType).toBe('ALL');
+    expect(Array.isArray(data.bySetup)).toBe(true);
+    // The seeded 'xt_past' fixture never set triggeredAt, so it counts as
+    // never-triggered rather than a realized win/loss.
+    expect(data.overall.neverTriggered).toBeGreaterThanOrEqual(1);
+  });
+
   it('GET /scanner/status proxies the engine status', async () => {
     const res = await fetch(`${baseUrl}/scanner/status`);
     expect(res.status).toBe(200);

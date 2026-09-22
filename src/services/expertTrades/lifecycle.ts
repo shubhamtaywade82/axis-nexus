@@ -38,10 +38,14 @@ export function evaluateTransition(trade: ExpertTrade, cmp: number, now: number)
     return { ...next, state: 'STOPPED', closedAt: now };
   }
   if (cmp >= levels.target2) {
-    return { ...next, state: 'TARGET_2', closedAt: now };
+    // target2 > target1 always (levelEngine guarantees it), so a gap
+    // straight through both in one poll still counts as a target1 touch —
+    // otherwise a gapping winner would silently vanish from the target1
+    // hit-rate stat despite having cleared it.
+    return { ...next, state: 'TARGET_2', closedAt: now, target1HitAt: trade.target1HitAt ?? now };
   }
   if (trade.state === 'ACTIVE' && cmp >= levels.target1) {
-    return { ...next, state: 'TARGET_1' };
+    return { ...next, state: 'TARGET_1', target1HitAt: now };
   }
   // Only an ACTIVE trade that never reached target 1 expires on time; once
   // target 1 is banked the idea has already proven out and is left open

@@ -1,6 +1,6 @@
 import { pool, dbMode } from '../../db';
 import { moduleLogger } from '../../lib/logger';
-import { OPEN_STATES, type ExpertTrade, type ExpertTradeListFilter, type ExpertTradeState } from './types';
+import { OPEN_STATES, TERMINAL_STATES, type ExpertTrade, type ExpertTradeListFilter, type ExpertTradeState } from './types';
 
 const log = moduleLogger('expert_trades_repo');
 
@@ -147,6 +147,21 @@ export async function getExpertTradesBySymbol(symbol: string, limit = 20): Promi
 export async function hasOpenExpertTrade(symbol: string, openStates: ExpertTradeState[] = OPEN_STATES): Promise<boolean> {
   const trades = await getExpertTradesBySymbol(symbol, 5);
   return trades.some((t) => openStates.includes(t.state));
+}
+
+/** Every terminal-state trade, uncapped — unlike `listExpertTrades` (which
+ * clamps to 200 for UI listings), outcome analytics needs the full
+ * historical sample or a growing track record silently truncates itself. */
+export async function getAllClosedExpertTrades(): Promise<ExpertTrade[]> {
+  if (dbMode() === 'postgres') {
+    try {
+      const res = await pool.query('SELECT data FROM expert_trades WHERE state = ANY($1)', [TERMINAL_STATES]);
+      return res.rows.map(rowToTrade);
+    } catch (e: any) {
+      log.warn({ err: e.message }, 'Failed to load closed expert trades from Postgres, falling back to memory');
+    }
+  }
+  return Array.from(memTrades.values()).filter((t) => TERMINAL_STATES.includes(t.state));
 }
 
 export async function clearExpertTradesForTests(): Promise<void> {

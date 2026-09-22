@@ -69,6 +69,27 @@ export interface ExpertTrade {
   lastEvaluatedPrice?: number;
 }
 
+export interface OutcomeStats {
+  setupType: ExpertTradeSetupType | 'ALL';
+  sampleSize: number;
+  neverTriggered: number;
+  winRate: number | null;
+  target1HitRate: number | null;
+  target2HitRate: number | null;
+  stopRate: number | null;
+  expiredRate: number | null;
+  avgWinnerPct: number | null;
+  avgLoserPct: number | null;
+  expectancyPct: number | null;
+  medianHoldingDays: number | null;
+}
+
+export interface ExpertTradeStatsResponse {
+  computedAt: number;
+  overall: OutcomeStats;
+  bySetup: OutcomeStats[];
+}
+
 export interface ExpertTradeScanSummary {
   scannedAt: number;
   universe: string;

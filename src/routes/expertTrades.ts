@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { ExpertTradeEngine } from '../services/expertTrades/expertTradeEngine';
-import { getExpertTrade, getExpertTradesBySymbol, listExpertTrades } from '../services/expertTrades/repository';
+import { getAllClosedExpertTrades, getExpertTrade, getExpertTradesBySymbol, listExpertTrades } from '../services/expertTrades/repository';
+import { computeOutcomeStats } from '../services/expertTrades/analytics';
 import type { ExpertTradeHorizon, ExpertTradeState } from '../services/expertTrades/types';
 
 const OPEN_STATES: ExpertTradeState[] = ['NEW', 'ACTIVE', 'TARGET_1'];
@@ -36,6 +37,18 @@ export function expertTradesRoutes(engine: ExpertTradeEngine): Router {
     try {
       const trades = await listExpertTrades({ state: PAST_STATES, limit });
       return res.json({ count: trades.length, trades });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/expert-trades/stats - outcome analytics over every closed idea
+  // (win rate, T1/T2 hit rate, stop rate, expectancy — overall and per setup
+  // type). Declared before /:id so "stats" is never swallowed as an id.
+  router.get('/stats', async (_req, res) => {
+    try {
+      const closed = await getAllClosedExpertTrades();
+      return res.json({ computedAt: Date.now(), ...computeOutcomeStats(closed) });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }

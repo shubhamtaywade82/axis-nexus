@@ -139,6 +139,11 @@ export interface ExpertTrade {
   /** NEW ideas past this without triggering are EXPIRED. */
   expiresAt: number;
   triggeredAt?: number;
+  /** Set the first time CMP touches target1, independent of final state —
+   * a gap straight through to target2 still counts. Exists so outcome
+   * analytics can report a target-1 hit rate even for trades whose final
+   * state is TARGET_2 (which overwrites `state`, not this). */
+  target1HitAt?: number;
   closedAt?: number;
   lastEvaluatedAt: number;
   lastEvaluatedPrice?: number;

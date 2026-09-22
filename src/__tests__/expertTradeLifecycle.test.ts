@@ -69,24 +69,28 @@ describe('Lifecycle — deterministic state transitions', () => {
     expect(next.closedAt).toBeDefined();
   });
 
-  it('reaches TARGET_1 without closing the idea', () => {
+  it('reaches TARGET_1 without closing the idea, and records target1HitAt', () => {
     const trade = makeTrade({ state: 'ACTIVE', triggeredAt: Date.now() - 1000 });
     const next = evaluateTransition(trade, 254, Date.now());
     expect(next.state).toBe('TARGET_1');
     expect(next.closedAt).toBeUndefined();
+    expect(next.target1HitAt).toBeDefined();
   });
 
-  it('reaches TARGET_2 from TARGET_1 and closes the idea', () => {
-    const trade = makeTrade({ state: 'TARGET_1', triggeredAt: Date.now() - 1000 });
+  it('reaches TARGET_2 from TARGET_1 and closes the idea, keeping the original target1HitAt', () => {
+    const firstHitAt = Date.now() - 500;
+    const trade = makeTrade({ state: 'TARGET_1', triggeredAt: Date.now() - 1000, target1HitAt: firstHitAt });
     const next = evaluateTransition(trade, 267, Date.now());
     expect(next.state).toBe('TARGET_2');
     expect(next.closedAt).toBeDefined();
+    expect(next.target1HitAt).toBe(firstHitAt);
   });
 
-  it('resolves a gap through both targets directly to TARGET_2, not TARGET_1', () => {
+  it('resolves a gap through both targets directly to TARGET_2, not TARGET_1, but still records target1HitAt', () => {
     const trade = makeTrade({ state: 'ACTIVE', triggeredAt: Date.now() - 1000 });
     const next = evaluateTransition(trade, 270, Date.now());
     expect(next.state).toBe('TARGET_2');
+    expect(next.target1HitAt).toBeDefined();
   });
 
   it('expires an ACTIVE trade that never reaches target 1 within its holding horizon', () => {
