@@ -14,9 +14,11 @@ import {
   listPaperStrategies, updatePaperStrategyStatus, pushAlert,
   reconcileLedger, correctLedgerFromPostgres, closeParentStrategyIfFlat,
 } from '../db';
-import { PaperPortfolioSource, type PortfolioSource } from './portfolioSource';
+import { PaperPortfolioSource, type NormalizedPosition, type PortfolioSource } from './portfolioSource';
 import { shouldEmitKeyedLog } from '../lib/logPolicy';
 import { getTradingMode, isSandboxMode } from '../lib/tradingMode';
+
+const UNREALIZED_SKEW_WARN_INR = 1;
 
 /**
  * Autonomy engine — the heartbeat that keeps the system trading when no
@@ -438,8 +440,22 @@ export class AutonomyEngine {
   private async publishPortfolioSnapshot(): Promise<void> {
     try {
       const [positions, wallet] = await Promise.all([this.portfolio.getPositions(), this.portfolio.getWallet()]);
+      this.warnOnUnrealizedSkew(positions, wallet.unrealizedPnl);
       eventBus.emit('portfolio', { positions, funds: wallet, markedAt: Date.now() });
     } catch { /* snapshot failure is non-fatal */ }
+  }
+
+  // Dashboard shows wallet.unrealizedPnl, Positions page sums open rows; they
+  // drifted ~₹150 apart in sandbox. Logs every row (incl. closed) to show which differs.
+  private warnOnUnrealizedSkew(positions: NormalizedPosition[], walletUnrealized: number): void {
+    const openRowsUnrealized = positions
+      .filter((p) => p.netQty !== 0)
+      .reduce((sum, p) => sum + p.unrealizedProfit, 0);
+    const skew = walletUnrealized - openRowsUnrealized;
+    if (Math.abs(skew) <= UNREALIZED_SKEW_WARN_INR) return;
+    if (!shouldEmitKeyedLog('portfolio:unrealized_skew', 30_000)) return;
+    const rows = positions.map((p) => `${p.tradingSymbol}:qty=${p.netQty},ltp=${p.ltp},unr=${p.unrealizedProfit}`).join(' | ');
+    eventBus.log('WARN', `Unrealized skew ₹${skew.toFixed(2)}: wallet=${walletUnrealized} openRows=${openRowsUnrealized.toFixed(2)} [${rows}]`, 'autonomy');
   }
 
   private scheduleTickMark(): void {
