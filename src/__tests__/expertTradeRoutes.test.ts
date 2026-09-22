@@ -4,6 +4,9 @@ import type { Server } from 'http';
 import { expertTradesRoutes } from '../routes/expertTrades';
 import type { ExpertTradeEngine } from '../services/expertTrades/expertTradeEngine';
 import type { ExpertTradeScheduler } from '../services/expertTrades/scheduler';
+import type { RiskEngine } from '../services/riskEngine';
+import type { PortfolioSource } from '../services/portfolioSource';
+import type { PaperExecutionEngine } from '../engines/paper';
 import { saveExpertTrade, clearExpertTradesForTests } from '../services/expertTrades/repository';
 import type { ExpertTrade } from '../services/expertTrades/types';
 
@@ -39,11 +42,16 @@ describe('Expert Trades Routes HTTP API', () => {
   let baseUrl: string;
   let mockEngine: Partial<ExpertTradeEngine>;
   let mockScheduler: Partial<ExpertTradeScheduler>;
+  let mockPaper: Partial<PaperExecutionEngine>;
+  let mockRisk: Partial<RiskEngine>;
+  let mockPortfolio: Partial<PortfolioSource>;
 
   beforeAll(async () => {
     await clearExpertTradesForTests();
     await saveExpertTrade(makeTrade());
     await saveExpertTrade(makeTrade({ id: 'xt_past', symbol: 'RELIANCE', state: 'TARGET_2', closedAt: Date.now() }));
+    await saveExpertTrade(makeTrade({ id: 'xt_quickbuy_test', symbol: 'TCS', securityId: '11536' }));
+    await saveExpertTrade(makeTrade({ id: 'xt_quickbuy_ineligible', symbol: 'INFY', securityId: '1594', state: 'TARGET_1' }));
 
     mockEngine = {
       getStatus: jest.fn().mockReturnValue({ scannedAt: Date.now(), universe: 'FNO_HEAVYWEIGHTS', published: 2 }),
@@ -56,10 +64,28 @@ describe('Expert Trades Routes HTTP API', () => {
       }),
       triggerPhase: jest.fn().mockResolvedValue({ result: 'brief text' }),
     };
+    mockPaper = {
+      placeOrder: jest.fn().mockResolvedValue({ status: 'TRADED', fill_price: 241.9, quantity: 20 }),
+    };
+    mockRisk = {
+      canTrade: jest.fn().mockReturnValue({ allowed: true }),
+    };
+    mockPortfolio = {
+      getWallet: jest.fn().mockResolvedValue({
+        availableMargin: 500000, usedMargin: 0, realizedPnl: 0, sessionRealizedPnl: 0,
+        unrealizedPnl: 0, totalCharges: 0, netRealizedPnl: 0, totalBalance: 500000, equity: 500000,
+      }),
+    };
 
     app = express();
     app.use(express.json());
-    app.use('/api/expert-trades', expertTradesRoutes(mockEngine as unknown as ExpertTradeEngine, mockScheduler as unknown as ExpertTradeScheduler));
+    app.use('/api/expert-trades', expertTradesRoutes(
+      mockEngine as unknown as ExpertTradeEngine,
+      mockPaper as unknown as PaperExecutionEngine,
+      mockRisk as unknown as RiskEngine,
+      mockPortfolio as unknown as PortfolioSource,
+      mockScheduler as unknown as ExpertTradeScheduler,
+    ));
 
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => {
@@ -106,7 +132,9 @@ describe('Expert Trades Routes HTTP API', () => {
     expect(res.status).toBe(200);
     const data: any = await res.json();
     expect(data.enabled).toBe(true);
-    expect(data.openIdeaCount).toBe(1); // the seeded NEW 'ONGC' fixture; xt_past is TARGET_2
+    // Open states are NEW/ACTIVE/TARGET_1: ONGC (NEW), TCS (NEW, quick-buy
+    // fixture) and INFY (TARGET_1, quick-buy fixture) — xt_past (TARGET_2) excluded.
+    expect(data.openIdeaCount).toBe(3);
   });
 
   it('POST /scheduler/trigger runs the requested phase', async () => {
@@ -155,6 +183,47 @@ describe('Expert Trades Routes HTTP API', () => {
     const data: any = await res.json();
     expect(data.count).toBe(1);
     expect(data.trades[0].symbol).toBe('ONGC');
+  });
+
+  it('GET /:id/quick-buy/preview returns risk-sized quantity and capital/margin/risk-gate info', async () => {
+    const res = await fetch(`${baseUrl}/xt_quickbuy_test/quick-buy/preview`);
+    expect(res.status).toBe(200);
+    const data: any = await res.json();
+    expect(data.eligible).toBe(true);
+    expect(data.quantity).toBe(Math.floor(5000 / (241.8 - 229))); // default ₹5,000 risk / risk-per-share
+    expect(data.capitalRequired).toBeCloseTo(data.quantity * 241.8, 6);
+    expect(data.affordable).toBe(true);
+    expect(data.riskGate.allowed).toBe(true);
+  });
+
+  it('GET /:id/quick-buy/preview marks a TARGET_1 idea ineligible', async () => {
+    const res = await fetch(`${baseUrl}/xt_quickbuy_ineligible/quick-buy/preview`);
+    expect(res.status).toBe(200);
+    const data: any = await res.json();
+    expect(data.eligible).toBe(false);
+    expect(data.ineligibleReason).toMatch(/NEW or ACTIVE/);
+  });
+
+  it('POST /:id/quick-buy places a paper order sized by the server, never by the client', async () => {
+    const res = await fetch(`${baseUrl}/xt_quickbuy_test/quick-buy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantity: 999999 }), // ignored — sizing is server-side only
+    });
+    expect(res.status).toBe(200);
+    const data: any = await res.json();
+    expect(data.status).toBe('TRADED');
+    expect(mockPaper.placeOrder).toHaveBeenCalledWith(expect.objectContaining({
+      params: expect.objectContaining({ quantity: Math.floor(5000 / (241.8 - 229)), product_type: 'CNC', transaction_type: 'BUY', order_type: 'MARKET' }),
+      risk_limits: { stop_loss: 229, target: 253.4 },
+    }));
+  });
+
+  it('POST /:id/quick-buy rejects a second attempt on an already-bought idea', async () => {
+    const res = await fetch(`${baseUrl}/xt_quickbuy_test/quick-buy`, { method: 'POST' });
+    expect(res.status).toBe(422);
+    const data: any = await res.json();
+    expect(data.reason).toMatch(/Already bought/);
   });
 
   it('GET /:id returns a single trade', async () => {

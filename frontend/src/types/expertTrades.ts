@@ -67,6 +67,44 @@ export interface ExpertTrade {
   closedAt?: number;
   lastEvaluatedAt: number;
   lastEvaluatedPrice?: number;
+  execution?: ExpertTradeExecution;
+}
+
+export interface ExpertTradeExecution {
+  status: 'PLACED';
+  correlationId: string;
+  quantity: number;
+  fillPrice: number;
+  placedAt: number;
+  mode: 'paper';
+}
+
+export interface QuickBuyPreview {
+  tradeId: string;
+  symbol: string;
+  eligible: boolean;
+  ineligibleReason?: string;
+  quantity: number;
+  riskPerTradeInr: number;
+  entry: number;
+  stopLoss: number;
+  target1: number;
+  target2: number;
+  capitalRequired: number;
+  maxLossInr: number;
+  target1ProfitInr: number;
+  target2ProfitInr: number;
+  availableMargin: number;
+  affordable: boolean;
+  riskGate: { allowed: boolean; reason?: string };
+}
+
+export interface QuickBuyResult {
+  status: 'TRADED' | 'REJECTED';
+  reason?: string;
+  correlationId?: string;
+  quantity?: number;
+  fillPrice?: number;
 }
 
 export interface OutcomeStats {

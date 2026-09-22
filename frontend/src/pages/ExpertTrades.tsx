@@ -4,6 +4,7 @@ import { Button } from '../components/ui/Button';
 import { Select } from '../components/ui/Select';
 import { ExpertTradeCard } from '../components/expertTrades/ExpertTradeCard';
 import { TradePerformance } from '../components/expertTrades/TradePerformance';
+import { QuickBuyModal } from '../components/expertTrades/QuickBuyModal';
 import { api } from '../services/api';
 import { useApp } from '../store/AppContext';
 import { RefreshCw, Search } from 'lucide-react';
@@ -19,7 +20,7 @@ type Tab = 'open' | 'past';
  * a future live-push wiring, see useBackendStream.ts).
  */
 export function ExpertTrades() {
-  const { showToast } = useApp();
+  const { showToast, openModal, closeModal } = useApp();
   const [tab, setTab] = useState<Tab>('open');
   const [horizon, setHorizon] = useState<'ALL' | ExpertTradeHorizon>('ALL');
   const [trades, setTrades] = useState<ExpertTrade[]>([]);
@@ -69,6 +70,19 @@ export function ExpertTrades() {
       setScanning(false);
     }
   }, [load, showToast]);
+
+  const openQuickBuy = useCallback((trade: ExpertTrade) => {
+    openModal(
+      <QuickBuyModal
+        trade={trade}
+        onClose={closeModal}
+        onDone={(result) => {
+          showToast(`Bought ${result.quantity} ${result.symbol} @ ₹${result.fillPrice.toFixed(2)} (paper)`, 'success');
+          load();
+        }}
+      />,
+    );
+  }, [openModal, closeModal, showToast, load]);
 
   return (
     <div className="space-y-4">
@@ -139,7 +153,7 @@ export function ExpertTrades() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-          {trades.map((t) => <ExpertTradeCard key={t.id} trade={t} />)}
+          {trades.map((t) => <ExpertTradeCard key={t.id} trade={t} onQuickBuy={openQuickBuy} />)}
         </div>
       )}
     </div>

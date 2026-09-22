@@ -150,6 +150,52 @@ export interface ExpertTrade {
   closedAt?: number;
   lastEvaluatedAt: number;
   lastEvaluatedPrice?: number;
+  /** Set once a Quick Buy order has actually been placed against this idea.
+   * Independent of `state` — the idea's own NEW/ACTIVE/TARGET_n lifecycle
+   * tracks whether the SETUP triggered, not whether a real order exists. */
+  execution?: ExpertTradeExecution;
+}
+
+export interface ExpertTradeExecution {
+  status: 'PLACED';
+  correlationId: string;
+  quantity: number;
+  fillPrice: number;
+  placedAt: number;
+  /** Always 'paper' today — Quick Buy is deliberately restricted to the
+   * paper execution engine regardless of the deployment's TRADING_MODE
+   * until it has been proven out; see quickBuy.ts. */
+  mode: 'paper';
+}
+
+export interface QuickBuyPreview {
+  tradeId: string;
+  symbol: string;
+  /** False when already bought, in a non-buyable state, or the computed
+   * quantity rounds to zero — `ineligibleReason` says which. */
+  eligible: boolean;
+  ineligibleReason?: string;
+  quantity: number;
+  riskPerTradeInr: number;
+  entry: number;
+  stopLoss: number;
+  target1: number;
+  target2: number;
+  capitalRequired: number;
+  maxLossInr: number;
+  target1ProfitInr: number;
+  target2ProfitInr: number;
+  availableMargin: number;
+  affordable: boolean;
+  riskGate: { allowed: boolean; reason?: string };
+}
+
+export interface QuickBuyResult {
+  status: 'TRADED' | 'REJECTED';
+  reason?: string;
+  correlationId?: string;
+  quantity?: number;
+  fillPrice?: number;
 }
 
 export interface ExpertTradeScanSummary {
