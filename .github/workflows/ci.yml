@@ -12,14 +12,18 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend — typecheck + tests + lint
+    name: Backend — typecheck + tests + lint (node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 20 = engines floor, 24 = the node:24-alpine runtime the Docker image ships
+        node-version: [20, 24]
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
