@@ -12,6 +12,8 @@ import { buildLevels, computeMetrics, resolveHorizon, MIN_RR1 } from './levelEng
 import { computeMarketRegime, scoreSetup } from './scoringEngine';
 import { evaluateTransition } from './lifecycle';
 import { hasOpenExpertTrade, saveExpertTrade, updateExpertTrade, listExpertTrades } from './repository';
+import { CachedMarketDataProvider, type EquityMarketDataProvider } from './candleCache';
+import { confirmIntradayTrend } from './intradayConfirmation';
 import type { ExpertTrade, ExpertTradeFeatures, ExpertTradeLevels, ExpertTradeMetrics, ExpertTradeScanSummary, ExpertTradeSetupType, MarketRegime } from './types';
 import { OPEN_STATES } from './types';
 
@@ -32,6 +34,9 @@ const DEFAULT_MAX_UNIVERSE = 150;
 const DEFAULT_MAX_PUBLISHED = 15;
 /** A NEW idea whose entry never triggers within this window is stale. */
 const ENTRY_VALIDITY_MS = 14 * 24 * 60 * 60 * 1000;
+/** Docked from score (never disqualifying) when the 60m structural
+ * timeframe contradicts the daily setup — see intradayConfirmation.ts. */
+const INTRADAY_CONTRADICTION_PENALTY = 15;
 
 export interface ExpertTradeScanOptions {
   universe?: string;
@@ -49,13 +54,16 @@ export interface ExpertTradeScanOptions {
  * deliberately out of scope here) to act on.
  */
 export class ExpertTradeEngine {
-  private readonly provider: MarketDataProvider;
+  private readonly provider: EquityMarketDataProvider;
   private lastScanSummary: ExpertTradeScanSummary | null = null;
   private lifecycleTimer: NodeJS.Timeout | null = null;
   private scanning = false;
 
   constructor(private readonly client: DhanClient, private readonly market: MarketDataService) {
-    this.provider = new MarketDataProvider(client, market);
+    // Same-day cache in front of the historical-candle fetch — a daily bar
+    // only advances once per trading day, so "fetched today" is a correct
+    // cache hit, not a staleness risk (see candleCache.ts).
+    this.provider = new CachedMarketDataProvider(new MarketDataProvider(client, market));
   }
 
   getStatus(): ExpertTradeScanSummary | null {
@@ -110,6 +118,7 @@ export class ExpertTradeEngine {
       let skippedExisting = 0;
       let skippedIlliquid = 0;
       let skippedFetchFailed = 0;
+      let intradayContradicted = 0;
       const detected: ExpertTrade[] = [];
 
       for (const inst of instruments) {
@@ -137,8 +146,11 @@ export class ExpertTradeEngine {
         if (!features) continue;
         candidatesConsidered++;
 
-        const trade = this.buildBestTrade(inst, candles, features, perf, regime, startedAt);
-        if (trade) detected.push(trade);
+        const trade = await this.buildBestTrade(inst, candles, features, perf, regime, startedAt);
+        if (trade) {
+          detected.push(trade);
+          if (!trade.setup.intradayAligned) intradayContradicted++;
+        }
       }
 
       detected.sort((a, b) => b.setup.score - a.setup.score);
@@ -161,6 +173,7 @@ export class ExpertTradeEngine {
         skippedExisting,
         skippedIlliquid,
         skippedFetchFailed,
+        intradayContradicted,
         durationMs: Date.now() - startedAt,
       };
       this.lastScanSummary = summary;
@@ -172,16 +185,18 @@ export class ExpertTradeEngine {
   }
 
   /** Runs setup detection + level construction + scoring for one
-   * instrument, returning the single best-scoring valid setup (a symbol
-   * only ever gets one open idea at a time). */
-  private buildBestTrade(
+   * instrument on the daily timeframe, then — only for the single
+   * best-scoring valid setup found (a symbol only ever gets one open idea
+   * at a time) — checks 60-minute structure for confirmation before
+   * publishing. */
+  private async buildBestTrade(
     inst: InstrumentRef,
     candles: Candle[],
     features: ExpertTradeFeatures,
     perf: PerformanceMetrics,
     regime: MarketRegime,
     now: number,
-  ): ExpertTrade | null {
+  ): Promise<ExpertTrade | null> {
     const setups = detectSetups(candles, features, perf);
     let best: { setupType: ExpertTradeSetupType; levels: ExpertTradeLevels; metrics: ExpertTradeMetrics; score: number; conviction: number } | null = null;
 
@@ -191,15 +206,23 @@ export class ExpertTradeEngine {
       const horizon = resolveHorizon(type);
       const metrics = computeMetrics(levels, horizon);
       if (metrics.rr1 < MIN_RR1) continue;
-      const { score, conviction } = scoreSetup(type, strength, features, metrics, regime);
+      const { score, conviction } = scoreSetup(strength, features, metrics, regime);
       if (!best || score > best.score) {
         best = { setupType: type, levels, metrics, score, conviction };
       }
     }
     if (!best) return null;
 
+    const confirmation = await confirmIntradayTrend(this.client, inst);
+    if (!confirmation.aligned) {
+      best.score = Math.max(0, best.score - INTRADAY_CONTRADICTION_PENALTY);
+      best.conviction = best.score;
+    }
+
     const horizon = resolveHorizon(best.setupType);
     const { thesis, invalidation } = describeSetup(best.setupType, inst.symbol, features, best.levels);
+    thesis.push(confirmation.reason);
+    if (!confirmation.aligned) invalidation.push(confirmation.reason);
 
     return {
       id: `xt_${now}_${inst.symbol.toLowerCase()}`,
@@ -211,7 +234,7 @@ export class ExpertTradeEngine {
       exchange: inst.exchangeSegment === 'BSE_EQ' ? 'BSE' : 'NSE',
       direction: 'LONG',
       horizon,
-      setup: { type: best.setupType, score: best.score, conviction: best.conviction },
+      setup: { type: best.setupType, score: best.score, conviction: best.conviction, intradayAligned: confirmation.aligned },
       market: { regime },
       levels: best.levels,
       metrics: best.metrics,

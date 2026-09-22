@@ -15,7 +15,7 @@ function makeTrade(overrides: Partial<ExpertTrade> = {}): ExpertTrade {
     exchange: 'NSE',
     direction: 'LONG',
     horizon: 'SHORT_TERM',
-    setup: { type: 'BREAKOUT', score: 80, conviction: 80 },
+    setup: { type: 'BREAKOUT', score: 80, conviction: 80, intradayAligned: true },
     market: { regime: 'NEUTRAL' },
     levels: { current: 100, entry: 100, entryLow: 99, entryHigh: 101, stopLoss: 95, target1: 108, target2: 115, invalidationLevel: 93 },
     metrics: { riskPerShare: 5, downsidePct: -5, target1Pct: 8, target2Pct: 15, rr1: 1.6, rr2: 3, potentialProfitPct: 15, expectedHoldingDays: { min: 3, max: 10 } },
@@ -89,8 +89,8 @@ describe('Outcome analytics — realized returns off actual observed prices', ()
 
   it('breaks results down per setup type, ranked by expectancy', () => {
     const triggeredAt = Date.now() - 3 * DAY;
-    const goodSetup = makeTrade({ setup: { type: 'MOMENTUM_CONTINUATION', score: 70, conviction: 70 }, state: 'TARGET_2', triggeredAt, closedAt: Date.now(), lastEvaluatedPrice: 120 });
-    const badSetup = makeTrade({ setup: { type: 'BREAKOUT', score: 70, conviction: 70 }, state: 'STOPPED', triggeredAt, closedAt: Date.now(), lastEvaluatedPrice: 90 });
+    const goodSetup = makeTrade({ setup: { type: 'MOMENTUM_CONTINUATION', score: 70, conviction: 70, intradayAligned: true }, state: 'TARGET_2', triggeredAt, closedAt: Date.now(), lastEvaluatedPrice: 120 });
+    const badSetup = makeTrade({ setup: { type: 'BREAKOUT', score: 70, conviction: 70, intradayAligned: true }, state: 'STOPPED', triggeredAt, closedAt: Date.now(), lastEvaluatedPrice: 90 });
 
     const { bySetup } = computeOutcomeStats([goodSetup, badSetup]);
     expect(bySetup.map((s) => s.setupType)).toEqual(['MOMENTUM_CONTINUATION', 'BREAKOUT']);
