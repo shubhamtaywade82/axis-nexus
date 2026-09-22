@@ -279,7 +279,7 @@ describe('BrokerPortfolioSource', () => {
 
   it('sandbox paper-only close avoids broker and option-chain API calls', async () => {
     process.env.TRADING_MODE = 'sandbox';
-    const { initDatabase, executePaperOrder, pool } = await import('../db');
+    const { initDatabase, executePaperOrder, pool } = await import('../db.js');
     await initDatabase();
     await executePaperOrder({
       symbol: 'BANKNIFTY56800CE',
@@ -365,7 +365,7 @@ describe('BrokerPortfolioSource', () => {
 
   it('tags sandbox journal rows when TRADING_MODE=sandbox', async () => {
     process.env.TRADING_MODE = 'sandbox';
-    const { journal } = await import('../services/journal');
+    const { journal } = await import('../services/journal.js');
     const appendSpy = jest.spyOn(journal, 'append');
     try {
       const place = jest.fn(async () => ({ correlationId: 'c1', data: { orderId: 'ord_sbx' } }));

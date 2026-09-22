@@ -52,7 +52,7 @@ async function main() {
       }
       // journal.close() schedules a final flush; awaiting it prevents a
       // race where the process exits before the last entries land on disk.
-      const { journal } = await import("./services/journal");
+      const { journal } = await import("./services/journal.js");
       await journal.close();
     } catch (e: any) {
       log.warn({ err: { message: e?.message || String(e) } }, "Sidecar shutdown cleanup error");

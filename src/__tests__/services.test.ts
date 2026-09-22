@@ -673,7 +673,7 @@ describe('RiskEngine — IST session rollover (RISK-01)', () => {
     await risk.start();
     // Only assert same-day persistence when the host clock and IST agree on
     // the date (avoids UTC-evening flakiness where `today` != IST's today).
-    const { marketClock } = await import('../services/marketHours');
+    const { marketClock } = await import('../services/marketHours.js');
     if (marketClock().istDate === today) expect(risk.isKilled()).toBe(true);
     risk.stop();
     await saveRiskState({ killed: false, killedReason: null, killedDate: null, limits: {} });
