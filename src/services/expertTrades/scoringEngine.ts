@@ -1,5 +1,5 @@
 import type { PerformanceMetrics } from '../research/types';
-import type { ExpertTradeFeatures, ExpertTradeMetrics, ExpertTradeSetup, ExpertTradeSetupType, MarketRegime } from './types';
+import type { ExpertTradeFeatures, ExpertTradeMetrics, MarketRegime } from './types';
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -29,12 +29,11 @@ const REGIME_SCORE: Record<MarketRegime, number> = { RISK_ON: 5, NEUTRAL: 3, RIS
  * repository.ts) — it does not exist on day one.
  */
 export function scoreSetup(
-  setupType: ExpertTradeSetupType,
   strength: number,
   f: ExpertTradeFeatures,
   metrics: ExpertTradeMetrics,
   regime: MarketRegime,
-): ExpertTradeSetup {
+): { score: number; conviction: number } {
   const trendScore = [f.trend.above20, f.trend.above50, f.trend.above200, f.trend.sma200Rising === true]
     .filter(Boolean).length * 5; // 0-20
 
@@ -60,5 +59,5 @@ export function scoreSetup(
   const total = trendScore + momentumScore + rsScore + volumeScore + structureScore + rrScore + volatilityScore + regimeScore;
   const score = Math.round(clamp(total, 0, 100));
 
-  return { type: setupType, score, conviction: score };
+  return { score, conviction: score };
 }

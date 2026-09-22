@@ -53,6 +53,11 @@ export function ExpertTradeCard({ trade, onViewDetail }: { trade: ExpertTrade; o
           <div className="text-[9.5px] font-mono text-muted mt-0.5">
             {trade.name} · {SETUP_LABEL[trade.setup.type] || trade.setup.type} · {HORIZON_LABEL[trade.horizon] || trade.horizon}
           </div>
+          {!trade.setup.intradayAligned && (
+            <div className="text-[9px] font-mono text-gold mt-0.5 flex items-center gap-1">
+              <ShieldAlert size={10} /> 60m structure not yet confirming — daily setup only
+            </div>
+          )}
         </div>
         <span className="flex items-center gap-1.5">
           <span className={`w-[7px] h-[7px] rounded-full flex-shrink-0 ${style.dot}`} />

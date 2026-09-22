@@ -15,7 +15,7 @@ function makeTrade(overrides: Partial<ExpertTrade> = {}): ExpertTrade {
     exchange: 'NSE',
     direction: 'LONG',
     horizon: 'SHORT_TERM',
-    setup: { type: 'BREAKOUT', score: 85, conviction: 85 },
+    setup: { type: 'BREAKOUT', score: 85, conviction: 85, intradayAligned: true },
     market: { regime: 'RISK_ON' },
     levels: { current: 234.7, entry: 241.8, entryLow: 241.2, entryHigh: 244.2, stopLoss: 229, target1: 253.4, target2: 266, invalidationLevel: 226 },
     metrics: { riskPerShare: 12.8, downsidePct: -5.3, target1Pct: 4.8, target2Pct: 10, rr1: 0.91, rr2: 1.89, potentialProfitPct: 10, expectedHoldingDays: { min: 3, max: 10 } },

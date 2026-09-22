@@ -54,7 +54,7 @@ export interface ExpertTrade {
   exchange: 'NSE' | 'BSE';
   direction: 'LONG';
   horizon: ExpertTradeHorizon;
-  setup: { type: ExpertTradeSetupType; score: number; conviction: number };
+  setup: { type: ExpertTradeSetupType; score: number; conviction: number; intradayAligned: boolean };
   market: { regime: MarketRegime };
   levels: ExpertTradeLevels;
   metrics: ExpertTradeMetrics;
@@ -113,5 +113,6 @@ export interface ExpertTradeScanSummary {
   skippedExisting: number;
   skippedIlliquid: number;
   skippedFetchFailed: number;
+  intradayContradicted: number;
   durationMs: number;
 }

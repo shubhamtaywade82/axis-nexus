@@ -26,6 +26,7 @@ import { ScalpPositionManager } from './services/scalpPositionManager';
 import { ScalpScanner } from './services/scalpScanner';
 import { ExpertTradeEngine } from './services/expertTrades/expertTradeEngine';
 import { initExpertTradeRepository } from './services/expertTrades/repository';
+import { initCandleCache } from './services/expertTrades/candleCache';
 import { ExpertTradeScheduler, defaultScheduledScanOptions } from './services/expertTrades/scheduler';
 
 /**
@@ -166,6 +167,7 @@ export async function startCore(): Promise<Core> {
   // is the scheduler's job below (a scan can also always be triggered
   // on-demand via POST /api/expert-trades/scan).
   await initExpertTradeRepository();
+  await initCandleCache();
   const expertTrades = new ExpertTradeEngine(client, market);
   expertTrades.start();
   const expertTradeScheduler = process.env.EXPERT_TRADE_SCHEDULER_ENABLED !== 'false'

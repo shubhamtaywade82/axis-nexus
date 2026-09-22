@@ -116,6 +116,9 @@ export interface ExpertTradeSetup {
   type: ExpertTradeSetupType;
   score: number;
   conviction: number;
+  /** Whether the 60-minute structural timeframe agreed with the daily
+   * thesis at publish time — see intradayConfirmation.ts. */
+  intradayAligned: boolean;
 }
 
 export interface ExpertTrade {
@@ -162,6 +165,9 @@ export interface ExpertTradeScanSummary {
   skippedExisting: number;
   skippedIlliquid: number;
   skippedFetchFailed: number;
+  /** Setups whose 60-minute structure contradicted the daily thesis at
+   * publish time — still published (with a score penalty), not dropped. */
+  intradayContradicted: number;
   durationMs: number;
 }
 

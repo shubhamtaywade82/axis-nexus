@@ -13,7 +13,7 @@ function makeTrade(overrides: Partial<ExpertTrade> = {}): ExpertTrade {
     exchange: 'NSE',
     direction: 'LONG',
     horizon: 'SHORT_TERM',
-    setup: { type: 'BREAKOUT', score: 80, conviction: 80 },
+    setup: { type: 'BREAKOUT', score: 80, conviction: 80, intradayAligned: true },
     market: { regime: 'NEUTRAL' },
     levels: {
       current: 234.7, entry: 241.8, entryLow: 241.2, entryHigh: 244.2,
