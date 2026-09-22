@@ -3,6 +3,7 @@ import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { expertTradesRoutes } from '../routes/expertTrades';
 import type { ExpertTradeEngine } from '../services/expertTrades/expertTradeEngine';
+import type { ExpertTradeScheduler } from '../services/expertTrades/scheduler';
 import { saveExpertTrade, clearExpertTradesForTests } from '../services/expertTrades/repository';
 import type { ExpertTrade } from '../services/expertTrades/types';
 
@@ -37,6 +38,7 @@ describe('Expert Trades Routes HTTP API', () => {
   let server: Server;
   let baseUrl: string;
   let mockEngine: Partial<ExpertTradeEngine>;
+  let mockScheduler: Partial<ExpertTradeScheduler>;
 
   beforeAll(async () => {
     await clearExpertTradesForTests();
@@ -47,10 +49,17 @@ describe('Expert Trades Routes HTTP API', () => {
       getStatus: jest.fn().mockReturnValue({ scannedAt: Date.now(), universe: 'FNO_HEAVYWEIGHTS', published: 2 }),
       scan: jest.fn().mockResolvedValue({ scannedAt: Date.now(), universe: 'FNO_HEAVYWEIGHTS', published: 1 }),
     };
+    mockScheduler = {
+      getStatus: jest.fn().mockReturnValue({
+        enabled: true, marketPhase: 'CLOSED', nextScheduledJob: 'Post-Market Scan (15:50 IST)',
+        nextJobTimeIst: '16:00 IST', telegramEnabled: false, openIdeaCount: 0, lastRunTimes: {},
+      }),
+      triggerPhase: jest.fn().mockResolvedValue({ result: 'brief text' }),
+    };
 
     app = express();
     app.use(express.json());
-    app.use('/api/expert-trades', expertTradesRoutes(mockEngine as unknown as ExpertTradeEngine));
+    app.use('/api/expert-trades', expertTradesRoutes(mockEngine as unknown as ExpertTradeEngine, mockScheduler as unknown as ExpertTradeScheduler));
 
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => {
@@ -90,6 +99,35 @@ describe('Expert Trades Routes HTTP API', () => {
     // The seeded 'xt_past' fixture never set triggeredAt, so it counts as
     // never-triggered rather than a realized win/loss.
     expect(data.overall.neverTriggered).toBeGreaterThanOrEqual(1);
+  });
+
+  it('GET /scheduler/status proxies the scheduler status with a live open-idea count', async () => {
+    const res = await fetch(`${baseUrl}/scheduler/status`);
+    expect(res.status).toBe(200);
+    const data: any = await res.json();
+    expect(data.enabled).toBe(true);
+    expect(data.openIdeaCount).toBe(1); // the seeded NEW 'ONGC' fixture; xt_past is TARGET_2
+  });
+
+  it('POST /scheduler/trigger runs the requested phase', async () => {
+    const res = await fetch(`${baseUrl}/scheduler/trigger`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phase: 'pre_market_brief' }),
+    });
+    expect(res.status).toBe(200);
+    const data: any = await res.json();
+    expect(data.result).toBe('brief text');
+    expect(mockScheduler.triggerPhase).toHaveBeenCalledWith('pre_market_brief');
+  });
+
+  it('POST /scheduler/trigger rejects an unknown phase', async () => {
+    const res = await fetch(`${baseUrl}/scheduler/trigger`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phase: 'nonsense' }),
+    });
+    expect(res.status).toBe(400);
   });
 
   it('GET /scanner/status proxies the engine status', async () => {

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { ExpertTradeEngine } from '../services/expertTrades/expertTradeEngine';
+import type { ExpertTradeScheduler } from '../services/expertTrades/scheduler';
 import { getAllClosedExpertTrades, getExpertTrade, getExpertTradesBySymbol, listExpertTrades } from '../services/expertTrades/repository';
 import { computeOutcomeStats } from '../services/expertTrades/analytics';
 import type { ExpertTradeHorizon, ExpertTradeState } from '../services/expertTrades/types';
@@ -14,7 +15,7 @@ const ALL_HORIZONS: ExpertTradeHorizon[] = ['SHORT_TERM', 'MID_TERM', 'LONG_TERM
  * Follows the same shape as researchRoutes.ts: thin handlers, business
  * logic lives entirely in services/expertTrades/*.
  */
-export function expertTradesRoutes(engine: ExpertTradeEngine): Router {
+export function expertTradesRoutes(engine: ExpertTradeEngine, scheduler?: ExpertTradeScheduler): Router {
   const router = Router();
 
   // GET /api/expert-trades - open trade ideas (NEW/ACTIVE/TARGET_1 by default)
@@ -57,6 +58,42 @@ export function expertTradesRoutes(engine: ExpertTradeEngine): Router {
   // GET /api/expert-trades/scanner/status - last scan summary
   router.get('/scanner/status', (_req, res) => {
     return res.json(engine.getStatus() ?? { scannedAt: null, message: 'No scan has run yet' });
+  });
+
+  // GET /api/expert-trades/scheduler/status - daily pre-market brief / post-market scan lifecycle
+  router.get('/scheduler/status', async (_req, res) => {
+    const open = await listExpertTrades({ state: OPEN_STATES, limit: 200 }).catch(() => []);
+    if (!scheduler) {
+      return res.json({
+        enabled: false,
+        marketPhase: 'CLOSED',
+        nextScheduledJob: 'Scheduler not running (EXPERT_TRADE_SCHEDULER_ENABLED=false)',
+        nextJobTimeIst: '--',
+        telegramEnabled: false,
+        openIdeaCount: open.length,
+        lastRunTimes: {},
+      });
+    }
+    const status = scheduler.getStatus();
+    status.openIdeaCount = open.length;
+    return res.json(status);
+  });
+
+  // POST /api/expert-trades/scheduler/trigger - force a specific scheduled phase now
+  router.post('/scheduler/trigger', async (req, res) => {
+    const { phase = 'scan' } = req.body || {};
+    if (!scheduler) {
+      return res.status(400).json({ error: 'Expert Trade scheduler is not running' });
+    }
+    if (phase !== 'scan' && phase !== 'pre_market_brief') {
+      return res.status(400).json({ error: "phase must be 'scan' or 'pre_market_brief'" });
+    }
+    try {
+      const result = await scheduler.triggerPhase(phase);
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
   });
 
   // POST /api/expert-trades/scan - run the pipeline (universe -> setup -> levels -> score -> publish)

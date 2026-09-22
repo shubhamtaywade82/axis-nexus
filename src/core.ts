@@ -26,6 +26,7 @@ import { ScalpPositionManager } from './services/scalpPositionManager';
 import { ScalpScanner } from './services/scalpScanner';
 import { ExpertTradeEngine } from './services/expertTrades/expertTradeEngine';
 import { initExpertTradeRepository } from './services/expertTrades/repository';
+import { ExpertTradeScheduler, defaultScheduledScanOptions } from './services/expertTrades/scheduler';
 
 /**
  * Core bootstrap — the autonomous trading stack, shared by every entry
@@ -43,6 +44,7 @@ export interface Core {
   research: ResearchOrchestrator;
   researchScheduler?: ResearchScheduler;
   expertTrades: ExpertTradeEngine;
+  expertTradeScheduler?: ExpertTradeScheduler;
   paper: PaperExecutionEngine;
   live: LiveExecutionEngine;
   sandbox?: SandboxExecutionEngine;
@@ -159,12 +161,17 @@ export async function startCore(): Promise<Core> {
 
   // NSE Equity Expert Trade Engine — deterministic setup/entry/stop/target
   // pipeline, separate from (and downstream of) the research subsystem's
-  // qualitative bias/conviction signal. Lifecycle re-evaluation only; scans
-  // are triggered on demand via POST /api/expert-trades/scan (a full-NSE
-  // scan is too expensive to run unconditionally on every boot).
+  // qualitative bias/conviction signal. engine.start() only re-evaluates
+  // already-published ideas against live LTP every 60s; finding NEW ideas
+  // is the scheduler's job below (a scan can also always be triggered
+  // on-demand via POST /api/expert-trades/scan).
   await initExpertTradeRepository();
   const expertTrades = new ExpertTradeEngine(client, market);
   expertTrades.start();
+  const expertTradeScheduler = process.env.EXPERT_TRADE_SCHEDULER_ENABLED !== 'false'
+    ? new ExpertTradeScheduler(expertTrades, defaultScheduledScanOptions())
+    : undefined;
+  await expertTradeScheduler?.start();
 
   // Bridge core events into Redis pub/sub (Rails sidecar compat) when up.
   if (await redisAvailable()) {
@@ -230,7 +237,7 @@ export async function startCore(): Promise<Core> {
   eventBus.emit('system', { type: 'boot', mode });
   eventBus.log('SYSTEM', `Core stack online (mode=${mode}: ${describeModeContract()}) — backend is autonomous; frontend optional`, 'core');
 
-  return { client, sandboxClient, portfolio, market, risk, autonomy, agent, research, researchScheduler, expertTrades, paper, live, sandbox, tracker, selfHealing, scalp, scalpScanner };
+  return { client, sandboxClient, portfolio, market, risk, autonomy, agent, research, researchScheduler, expertTrades, expertTradeScheduler, paper, live, sandbox, tracker, selfHealing, scalp, scalpScanner };
 }
 
 /**

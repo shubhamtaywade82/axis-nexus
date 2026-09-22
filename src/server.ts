@@ -182,7 +182,7 @@ async function main() {
   app.use('/api/client-logs', clientLogsRoutes());
   app.use('/api/research', researchRoutes(core.research, core.researchScheduler));
   app.use('/api/scalp', writeLimiter, scalpRoutes(core.scalp));
-  app.use('/api/expert-trades', writeLimiter, expertTradesRoutes(core.expertTrades));
+  app.use('/api/expert-trades', writeLimiter, expertTradesRoutes(core.expertTrades, core.expertTradeScheduler));
 
   app.get('/api/health', (_req, res) => {
     res.json({

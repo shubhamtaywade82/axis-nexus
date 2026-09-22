@@ -90,6 +90,16 @@ export interface ExpertTradeStatsResponse {
   bySetup: OutcomeStats[];
 }
 
+export interface ExpertTradeSchedulerStatus {
+  enabled: boolean;
+  marketPhase: 'PRE_MARKET' | 'MARKET_HOURS' | 'POST_MARKET' | 'CLOSED';
+  nextScheduledJob: string;
+  nextJobTimeIst: string;
+  telegramEnabled: boolean;
+  openIdeaCount: number;
+  lastRunTimes: { postMarketScan?: number; preMarketBrief?: number };
+}
+
 export interface ExpertTradeScanSummary {
   scannedAt: number;
   universe: string;

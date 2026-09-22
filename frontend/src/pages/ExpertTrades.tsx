@@ -7,7 +7,7 @@ import { TradePerformance } from '../components/expertTrades/TradePerformance';
 import { api } from '../services/api';
 import { useApp } from '../store/AppContext';
 import { RefreshCw, Search } from 'lucide-react';
-import type { ExpertTrade, ExpertTradeHorizon, ExpertTradeScanSummary, ExpertTradeStatsResponse } from '../types/expertTrades';
+import type { ExpertTrade, ExpertTradeHorizon, ExpertTradeScanSummary, ExpertTradeSchedulerStatus, ExpertTradeStatsResponse } from '../types/expertTrades';
 
 type Tab = 'open' | 'past';
 
@@ -26,6 +26,7 @@ export function ExpertTrades() {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [status, setStatus] = useState<ExpertTradeScanSummary | null>(null);
+  const [schedule, setSchedule] = useState<ExpertTradeSchedulerStatus | null>(null);
   const [stats, setStats] = useState<ExpertTradeStatsResponse | null>(null);
 
   const load = useCallback(async () => {
@@ -52,6 +53,7 @@ export function ExpertTrades() {
     api.expertTradeScannerStatus().then((s) => {
       if (s && 'scannedAt' in s && s.scannedAt) setStatus(s as ExpertTradeScanSummary);
     }).catch(() => {});
+    api.expertTradeSchedulerStatus().then(setSchedule).catch(() => {});
   }, []);
 
   const runScan = useCallback(async () => {
@@ -89,14 +91,29 @@ export function ExpertTrades() {
         </div>
       </div>
 
-      {status && (
-        <Card className="p-3 text-[10.5px] font-mono text-muted flex flex-wrap gap-x-4 gap-y-1">
-          <span>Last scan: {new Date(status.scannedAt).toLocaleTimeString('en-IN')}</span>
-          <span>Universe: {status.universe}</span>
-          <span>Regime: <span className={status.regime === 'RISK_ON' ? 'text-accent' : status.regime === 'RISK_OFF' ? 'text-danger' : 'text-sky'}>{status.regime}</span></span>
-          <span>Screened: {status.totalScreened}</span>
-          <span>Setups: {status.setupsDetected}</span>
-          <span>Published: {status.published}</span>
+      {(status || schedule) && (
+        <Card className="p-3 text-[10.5px] font-mono text-muted flex flex-col gap-1">
+          {status && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <span>Last scan: {new Date(status.scannedAt).toLocaleTimeString('en-IN')}</span>
+              <span>Universe: {status.universe}</span>
+              <span>Regime: <span className={status.regime === 'RISK_ON' ? 'text-accent' : status.regime === 'RISK_OFF' ? 'text-danger' : 'text-sky'}>{status.regime}</span></span>
+              <span>Screened: {status.totalScreened}</span>
+              <span>Setups: {status.setupsDetected}</span>
+              <span>Published: {status.published}</span>
+            </div>
+          )}
+          {schedule && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 border-t border-border/50">
+              <span>
+                Autonomous scan: <span className={schedule.enabled ? 'text-accent' : 'text-muted'}>{schedule.enabled ? 'ARMED' : 'DISABLED'}</span>
+              </span>
+              {schedule.enabled && <span>Next: {schedule.nextScheduledJob}</span>}
+              {schedule.lastRunTimes.postMarketScan && (
+                <span>Last auto-scan: {new Date(schedule.lastRunTimes.postMarketScan).toLocaleString('en-IN')}</span>
+              )}
+            </div>
+          )}
         </Card>
       )}
 
