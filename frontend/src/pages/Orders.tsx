@@ -6,19 +6,53 @@ import { Select } from '../components/ui/Select';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { fmt, sideClass } from '../utils/formatters';
-import { Plus, RotateCcw } from 'lucide-react';
+import { CircleX, Plus, RotateCcw } from 'lucide-react';
 import { api } from '../services/api';
 
 export function Orders() {
   const { state, showToast, openModal, closeModal, addSystemLog, refreshPortfolio } = useApp();
   const [filter, setFilter] = useState('ALL');
   const [mode, setMode] = useState('paper');
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancellingAll, setCancellingAll] = useState(false);
 
   useEffect(() => {
     api.health().then((h) => setMode(h.mode || 'paper')).catch(() => {});
   }, []);
 
   const isPaper = mode === 'paper';
+  const isCancellable = (status: string) => ['PENDING', 'TRANSIT', 'OPEN'].includes((status || '').toUpperCase());
+  const pendingCount = state.orders.filter((o) => isCancellable(o.status)).length;
+
+  const handleCancelOrder = async (order: any) => {
+    const id = order.id || order.corr;
+    if (!id) return;
+    setCancellingId(id);
+    try {
+      await api.cancelOrder(id, order.corr);
+      showToast(`Order ${id} cancelled`, 'success');
+      addSystemLog('INFO', `Order ${id} (${order.instrument} ${order.side} ${order.qty}) cancelled`, isPaper ? 'paper_execution' : 'broker_execution');
+      await refreshPortfolio();
+    } catch (e: any) {
+      showToast(`Failed to cancel order: ${e.message}`, 'error');
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const handleCancelAllPending = async () => {
+    setCancellingAll(true);
+    try {
+      const res = await api.cancelAllOrders();
+      showToast(`Cancelled ${res.cancelledCount || 0} pending order(s)`, 'success');
+      addSystemLog('WARN', `Cancelled ${res.cancelledCount || 0} pending order(s) via control plane`, isPaper ? 'paper_execution' : 'broker_execution');
+      await refreshPortfolio();
+    } catch (e: any) {
+      showToast(`Failed to cancel all orders: ${e.message}`, 'error');
+    } finally {
+      setCancellingAll(false);
+    }
+  };
 
   const filtered = filter === 'ALL'
     ? state.orders
@@ -100,6 +134,12 @@ export function Orders() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {pendingCount > 0 && (
+            <Button variant="danger" onClick={handleCancelAllPending} disabled={cancellingAll}>
+              <CircleX size={12} className="mr-1" />
+              {cancellingAll ? 'Cancelling...' : `Cancel All (${pendingCount})`}
+            </Button>
+          )}
           <Button variant="ghost" onClick={async () => { await refreshPortfolio(); showToast('Orders refreshed', 'success'); }}>
             <RotateCcw size={12} className="mr-1" /> Refresh
           </Button>
@@ -122,7 +162,7 @@ export function Orders() {
         <table className="data-table w-full">
           <thead>
             <tr>
-              {['Order ID', 'Correlation ID', 'Time', 'Instrument', 'Type', 'Side', 'Qty', 'Price', 'Filled', 'Avg Price', 'Status', 'Latency'].map(h => (
+              {['Order ID', 'Correlation ID', 'Time', 'Instrument', 'Type', 'Side', 'Qty', 'Price', 'Filled', 'Avg Price', 'Status', 'Latency', 'Action'].map(h => (
                 <th key={h} className="text-left px-2.5 py-2 text-muted font-medium border-b border-border text-[9.5px] uppercase tracking-[0.5px]">{h}</th>
               ))}
             </tr>
@@ -130,7 +170,7 @@ export function Orders() {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={12} className="text-center py-8 text-muted text-xs">
+                <td colSpan={13} className="text-center py-8 text-muted text-xs">
                   {isPaper
                     ? 'No orders recorded. Click "Place Paper Order" to execute your first paper trade!'
                     : `No ${mode} orders today yet — bot trades will appear here once the scanner or agent places them.`}
@@ -156,6 +196,20 @@ export function Orders() {
                     )}
                   </td>
                   <td className="px-2.5 py-[7px] border-b border-border/60 text-muted">{o.latency}</td>
+                  <td className="px-2.5 py-[7px] border-b border-border/60">
+                    {isCancellable(o.status) ? (
+                      <Button
+                        variant="danger"
+                        className="text-[9px] px-2 py-0.5"
+                        disabled={cancellingId === (o.id || o.corr)}
+                        onClick={() => handleCancelOrder(o)}
+                      >
+                        {cancellingId === (o.id || o.corr) ? 'Cancelling...' : 'Cancel'}
+                      </Button>
+                    ) : (
+                      <span className="text-muted text-[10px]">—</span>
+                    )}
+                  </td>
                 </tr>
               ))
             )}

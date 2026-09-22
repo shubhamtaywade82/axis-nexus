@@ -7,6 +7,7 @@ import { eventBus } from './services/eventBus';
 import { journal } from './services/journal';
 import { applyFillSlippage, type FillKind } from './services/fillModel';
 import { redisPublisher } from './auth';
+import { getTradingMode } from './lib/tradingMode';
 
 const log = moduleLogger('db');
 
@@ -64,7 +65,7 @@ const log = moduleLogger('db');
  * PR; this TOC makes the structure navigable in the meantime.
  */
 
-const connectionString = process.env.DATABASE_URL || 'postgres://nemesis@localhost:5432/axis_nexus_development';
+const connectionString = process.env.DATABASE_URL || 'postgres://nemesis@localhost:5432/dhanhq_node_development';
 
 export const pool = new Pool({
   connectionString,
@@ -88,8 +89,9 @@ export function dbMode(): 'postgres' | 'memory' {
 }
 
 // ── in-memory wallet/position cache (always-on, see header) ───────────────
-const mem = {
+export const mem = {
   wallet: { id: 'default', initial_balance: 100000, available_margin: 100000, used_margin: 0, realized_pnl: 0, total_charges: 0, session_realized_base: 0, session_date: null as string | null, updated_at: new Date() },
+  sandboxWallet: { id: 'sandbox', initial_balance: 1000000, available_margin: 1000000, used_margin: 0, realized_pnl: 0, total_charges: 0, session_realized_base: 0, session_date: null as string | null, updated_at: new Date() },
   orders: [] as any[],
   positions: new Map<string, any>(),
   strategies: [] as any[],
@@ -103,6 +105,20 @@ const mem = {
   researchEvidence: new Map<string, any[]>(),
   autoid: 0,
 };
+
+export function posKey(modeKey: string, sym: string): string {
+  return modeKey === 'sandbox' ? `sandbox:${sym}` : sym;
+}
+
+export function getMemWallet(targetMode: string = getTradingMode()): any {
+  if (targetMode === 'sandbox') {
+    if (!mem.sandboxWallet) {
+      mem.sandboxWallet = { id: 'sandbox', initial_balance: 1000000, available_margin: 1000000, used_margin: 0, realized_pnl: 0, total_charges: 0, session_realized_base: 0, session_date: null, updated_at: new Date() };
+    }
+    return mem.sandboxWallet;
+  }
+  return mem.wallet;
+}
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS paper_wallet (
@@ -183,15 +199,24 @@ const SCHEMA_SQL = `
   ALTER TABLE paper_orders ADD COLUMN IF NOT EXISTS latency_ms INTEGER;
   ALTER TABLE paper_orders ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC(14, 2) NOT NULL DEFAULT 0.00;
   ALTER TABLE paper_orders ADD COLUMN IF NOT EXISTS charges NUMERIC(12, 2) NOT NULL DEFAULT 0.00;
+  ALTER TABLE paper_orders ADD COLUMN IF NOT EXISTS trading_mode VARCHAR(16) NOT NULL DEFAULT 'paper';
   ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS stop_loss NUMERIC(12, 2);
   ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS target NUMERIC(12, 2);
   ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS trailing_stop NUMERIC(12, 2);
   ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS margin_blocked NUMERIC(14, 2) NOT NULL DEFAULT 0.00;
+  ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS trading_mode VARCHAR(16) NOT NULL DEFAULT 'paper';
   ALTER TABLE paper_wallet ADD COLUMN IF NOT EXISTS total_charges NUMERIC(14, 2) NOT NULL DEFAULT 0.00;
   ALTER TABLE paper_strategies ADD COLUMN IF NOT EXISTS margin_hedge_credit NUMERIC(14, 2) NOT NULL DEFAULT 0.00;
   ALTER TABLE paper_wallet ADD COLUMN IF NOT EXISTS session_realized_base NUMERIC(14, 2) NOT NULL DEFAULT 0.00;
   ALTER TABLE paper_wallet ADD COLUMN IF NOT EXISTS session_date VARCHAR(10);
   ALTER TABLE risk_state ADD COLUMN IF NOT EXISTS killed_date VARCHAR(10);
+  INSERT INTO paper_wallet (id, initial_balance, available_margin, used_margin, realized_pnl)
+  VALUES ('sandbox', 1000000.00, 1000000.00, 0.00, 0.00)
+  ON CONFLICT (id) DO NOTHING;
+  UPDATE paper_positions SET trading_mode = 'sandbox', id = 'sandbox:' || id
+  WHERE trading_mode = 'paper' AND (id LIKE 'NIFTY 22 SEP%' OR id LIKE 'BANKNIFTY 29 SEP%');
+  UPDATE paper_orders SET trading_mode = 'sandbox'
+  WHERE trading_mode = 'paper' AND (symbol LIKE '%SEP%' OR correlation_id LIKE 'ast_%' OR correlation_id LIKE 'test_%' OR correlation_id LIKE 'gc4-%');
 `;
 
 export async function initDatabase(): Promise<void> {
@@ -225,6 +250,8 @@ async function warmMemCache(): Promise<void> {
   try {
     const walletRes = await pool.query('SELECT * FROM paper_wallet WHERE id = $1', ['default']);
     if (walletRes.rows[0]) mem.wallet = walletRes.rows[0];
+    const sbxWalletRes = await pool.query('SELECT * FROM paper_wallet WHERE id = $1', ['sandbox']);
+    if (sbxWalletRes.rows[0]) mem.sandboxWallet = sbxWalletRes.rows[0];
     const posRes = await pool.query('SELECT * FROM paper_positions');
     mem.positions.clear();
     for (const row of posRes.rows) mem.positions.set(row.id, row);
@@ -523,9 +550,8 @@ export async function deletePaperStrategy(id: string) {
  * getPaperWallet() read (cheap: one string compare) rather than a scheduler,
  * so it self-heals whenever the process happens to be up across the
  * rollover, restart included. */
-async function ensureWalletSessionRolled(): Promise<void> {
+async function ensureWalletSessionRolled(w: any = getMemWallet()): Promise<void> {
   const today = marketClock().istDate;
-  const w = mem.wallet as any;
   if (w.session_date === today) return;
   w.session_realized_base = Number(w.realized_pnl);
   w.session_date = today;
@@ -543,41 +569,25 @@ async function ensureWalletSessionRolled(): Promise<void> {
  * positions is provably correct (each position's own row is set directly
  * from a real margin-resolver call on that fill, never touched by anything
  * else) minus any hedge-margin credit still outstanding on a RUNNING
- * multi-leg strategy (the combined SPAN requirement is less than the sum of
- * each leg's standalone margin — see adjustWalletMargin/createPaperStrategy).
- *
- * The wallet's own used_margin/available_margin columns are still written
- * incrementally on every fill (adjustWalletMargin, executePaperOrder's
- * marginDelta) but are no longer READ for anything — found live, quantified
- * via direct DB query: used_margin had drifted ₹134,062 negative vs. this
- * derived value, because the credit given at multi-leg deploy time is only
- * reliably reversed if updatePaperStrategyStatus('STOPPED') fires for that
- * exact strategy — closeParentStrategyIfFlat's leg lookup is a plain string
- * match (autonomy.ts) that can silently miss, permanently leaking the
- * credit into the wallet total when it does. Deriving here instead of
- * fixing every possible way that reversal can be missed makes the SERVED
- * number correct regardless — self-healing, not one more special case.
- *
- * A strategy's `status` column can ALSO be stuck stale at 'RUNNING' (the
- * exact same missed-reversal bug) even after every one of its legs is
- * actually flat — trusting status alone would keep subtracting a credit for
- * a structure that's fully closed. So a credit only counts when the
- * strategy is RUNNING *and* at least one of its own legs still has a real
- * open position — cross-checked against live position state, not the
- * possibly-stale status flag.
+ * multi-leg strategy.
  */
-function computeDerivedMargin(): { usedMargin: number; availableMargin: number } {
+function computeDerivedMargin(targetMode = getTradingMode()): { usedMargin: number; availableMargin: number } {
+  const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
   let usedMargin = 0;
   for (const pos of mem.positions.values()) {
+    if ((pos.trading_mode || 'paper') !== modeKey) continue;
     if (Number(pos.net_qty) !== 0) usedMargin += Number(pos.margin_blocked || 0);
   }
   for (const strat of mem.strategies) {
     if (strat.status !== 'RUNNING' || !Number(strat.margin_hedge_credit || 0)) continue;
     const legs: any[] = strat.legs || [];
-    const stillOpen = legs.some((l) => Number(mem.positions.get(String(l.instrument).toUpperCase())?.net_qty || 0) !== 0);
+    const stillOpen = legs.some((l) => {
+      const p = mem.positions.get(posKey(modeKey, String(l.instrument).toUpperCase()));
+      return Number(p?.net_qty || 0) !== 0;
+    });
     if (stillOpen) usedMargin -= Number(strat.margin_hedge_credit || 0);
   }
-  const w = mem.wallet as any;
+  const w = getMemWallet(targetMode);
   const availableMargin = Number(w.initial_balance) + Number(w.realized_pnl) - usedMargin - Number(w.total_charges || 0);
   return { usedMargin: Number(usedMargin.toFixed(2)), availableMargin: Number(availableMargin.toFixed(2)) };
 }
@@ -585,19 +595,22 @@ function computeDerivedMargin(): { usedMargin: number; availableMargin: number }
 // ── wallet ──────────────────────────────────────────────────────────────
 // Reads always come from `mem` (see header) — Postgres is written to on every
 // fill but never read back on the hot path.
-export async function getPaperWallet() {
-  const w = mem.wallet as any;
+export async function getPaperWallet(targetMode = getTradingMode()) {
+  const w = getMemWallet(targetMode);
   if (!w) {
-    return { availableMargin: 100000, usedMargin: 0, realizedPnl: 0, sessionRealizedPnl: 0, unrealizedPnl: 0, totalCharges: 0, netRealizedPnl: 0, totalBalance: 100000, equity: 100000, spanMargin: 0, exposureMargin: 0 };
+    const init = targetMode === 'sandbox' ? 1000000 : 100000;
+    return { availableMargin: init, usedMargin: 0, realizedPnl: 0, sessionRealizedPnl: 0, unrealizedPnl: 0, totalCharges: 0, netRealizedPnl: 0, totalBalance: init, equity: init, spanMargin: 0, exposureMargin: 0 };
   }
-  await ensureWalletSessionRolled();
-  const { usedMargin, availableMargin } = computeDerivedMargin();
+  await ensureWalletSessionRolled(w);
+  const { usedMargin, availableMargin } = computeDerivedMargin(targetMode);
   const realizedPnl = Number(w.realized_pnl);
   const sessionRealizedPnl = realizedPnl - Number(w.session_realized_base || 0);
   const totalCharges = Number(w.total_charges || 0);
   const initialBalance = Number(w.initial_balance);
+  const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
   let unrealizedPnl = 0;
   for (const pos of mem.positions.values()) {
+    if ((pos.trading_mode || 'paper') !== modeKey) continue;
     const netQty = Number(pos.net_qty);
     if (netQty === 0) continue;
     unrealizedPnl += computeUnrealized(netQty, Number(pos.buy_avg), Number(pos.sell_avg), Number(pos.ltp));
@@ -606,46 +619,46 @@ export async function getPaperWallet() {
     availableMargin, usedMargin, realizedPnl, sessionRealizedPnl, unrealizedPnl, totalCharges,
     netRealizedPnl: Number((realizedPnl - totalCharges).toFixed(2)),
     totalBalance: availableMargin + usedMargin,
-    // Net worth: capital + booked P&L + open P&L, net of charges — distinct
-    // from availableMargin (the trading-gate number margin blocks reduce).
     equity: Number((initialBalance + realizedPnl + unrealizedPnl - totalCharges).toFixed(2)),
     spanMargin: Number((usedMargin * 0.7).toFixed(2)),
     exposureMargin: Number((usedMargin * 0.3).toFixed(2)),
   };
 }
 
-/** One-off adjustment to blocked margin outside the per-fill delta flow —
- * used to apply/reverse a multi-leg strategy's hedge-margin benefit (the
- * combined SPAN requirement across legs is usually less than the sum of
- * each leg's standalone margin). Positive `delta` releases margin back to
- * available; negative re-blocks it. */
-export async function adjustWalletMargin(delta: number): Promise<void> {
+export async function adjustWalletMargin(delta: number, targetMode = getTradingMode()): Promise<void> {
   if (!delta) return;
-  mem.wallet.used_margin = Number(mem.wallet.used_margin) - delta;
-  mem.wallet.available_margin = Number(mem.wallet.available_margin) + delta;
-  mem.wallet.updated_at = new Date();
+  const w = getMemWallet(targetMode);
+  const walletId = targetMode === 'sandbox' ? 'sandbox' : 'default';
+  w.used_margin = Number(w.used_margin) - delta;
+  w.available_margin = Number(w.available_margin) + delta;
+  w.updated_at = new Date();
   if (mode === 'postgres') {
     await pool.query(
-      `UPDATE paper_wallet SET used_margin = used_margin - $1, available_margin = available_margin + $1, updated_at = NOW() WHERE id = 'default'`,
-      [delta],
+      `UPDATE paper_wallet SET used_margin = used_margin - $1, available_margin = available_margin + $1, updated_at = NOW() WHERE id = $2`,
+      [delta, walletId],
     ).catch(() => {});
   }
 }
 
-export async function resetPaperWallet(initialBalance = 100000) {
+export async function resetPaperWallet(initialBalance?: number, targetMode: string = getTradingMode()) {
+  const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
+  const walletId = modeKey === 'sandbox' ? 'sandbox' : 'default';
+  const balance = initialBalance ?? (modeKey === 'sandbox' ? 1000000 : 100000);
   if (mode === 'postgres') {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       await client.query(
-        `UPDATE paper_wallet SET initial_balance = $1, available_margin = $1, used_margin = 0, realized_pnl = 0, total_charges = 0, session_realized_base = 0, session_date = NULL, updated_at = NOW() WHERE id = 'default'`,
-        [initialBalance],
+        `UPDATE paper_wallet SET initial_balance = $1, available_margin = $1, used_margin = 0, realized_pnl = 0, total_charges = 0, session_realized_base = 0, session_date = NULL, updated_at = NOW() WHERE id = $2`,
+        [balance, walletId],
       );
-      await client.query('DELETE FROM paper_positions');
-      await client.query('DELETE FROM paper_orders');
-      await client.query('DELETE FROM alerts');
-      await client.query('DELETE FROM agent_events');
-      await client.query(`UPDATE risk_state SET killed = FALSE, killed_reason = NULL, killed_date = NULL, limits = '{}', consecutive_losses = 0, updated_at = NOW() WHERE id = 'default'`);
+      await client.query('DELETE FROM paper_positions WHERE trading_mode = $1', [modeKey]);
+      await client.query('DELETE FROM paper_orders WHERE trading_mode = $1', [modeKey]);
+      if (modeKey === 'paper') {
+        await client.query('DELETE FROM alerts');
+        await client.query('DELETE FROM agent_events');
+        await client.query(`UPDATE risk_state SET killed = FALSE, killed_reason = NULL, killed_date = NULL, limits = '{}', consecutive_losses = 0, updated_at = NOW() WHERE id = 'default'`);
+      }
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK');
@@ -654,23 +667,33 @@ export async function resetPaperWallet(initialBalance = 100000) {
       client.release();
     }
   }
-  // The in-memory cache is the read path in both modes — always reset it.
-  mem.wallet = { id: 'default', initial_balance: initialBalance, available_margin: initialBalance, used_margin: 0, realized_pnl: 0, total_charges: 0, session_realized_base: 0, session_date: null, updated_at: new Date() };
-  mem.orders = [];
-  mem.positions.clear();
-  mem.alerts = [];
-  mem.agentEvents = [];
-  mem.riskState = { killed: false, killedReason: null, limits: {}, consecutiveLosses: 0 };
-  return { status: 'ok', initialBalance };
+  const w = getMemWallet(modeKey);
+  w.initial_balance = balance;
+  w.available_margin = balance;
+  w.used_margin = 0;
+  w.realized_pnl = 0;
+  w.total_charges = 0;
+  w.session_realized_base = 0;
+  w.session_date = null;
+  w.updated_at = new Date();
+  for (const [k, p] of mem.positions.entries()) {
+    if ((p.trading_mode || 'paper') === modeKey) mem.positions.delete(k);
+  }
+  mem.orders = mem.orders.filter((o) => (o.trading_mode || 'paper') !== modeKey);
+  if (modeKey === 'paper') {
+    mem.alerts = [];
+    mem.agentEvents = [];
+    mem.riskState = { killed: false, killedReason: null, limits: {}, consecutiveLosses: 0 };
+  }
+  return { status: 'ok', initialBalance: balance, tradingMode: modeKey };
 }
 
 // ── orders ──────────────────────────────────────────────────────────────
-// Full order history — not a hot-path read (no per-tick caller), so this
-// still queries Postgres for durability beyond `mem`'s same-day window.
-export async function listPaperOrders() {
+export async function listPaperOrders(limit = 100, targetMode = getTradingMode()) {
+  const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
   const rows = mode === 'postgres'
-    ? (await pool.query('SELECT * FROM paper_orders ORDER BY created_at DESC LIMIT 100').catch(() => ({ rows: [] }))).rows
-    : mem.orders.slice(0, 100);
+    ? (await pool.query('SELECT * FROM paper_orders WHERE trading_mode = $1 ORDER BY created_at DESC LIMIT $2', [modeKey, limit]).catch(() => ({ rows: [] }))).rows
+    : mem.orders.filter((o: any) => (o.trading_mode || 'paper') === modeKey).slice(0, limit);
   return rows.map((r: any) => ({
     id: r.id,
     corr: r.correlation_id,
@@ -691,11 +714,28 @@ export async function listPaperOrders() {
   }));
 }
 
-export async function getTodayOrderStats() {
+export async function cancelPaperOrder(orderId: string): Promise<boolean> {
+  let found = false;
+  for (const o of mem.orders) {
+    if ((o.id === orderId || o.correlation_id === orderId) && ['PENDING', 'TRANSIT'].includes(o.status)) {
+      o.status = 'CANCELLED';
+      found = true;
+    }
+  }
+  if (mode === 'postgres') {
+    const res = await pool.query(
+      "UPDATE paper_orders SET status = 'CANCELLED' WHERE (id = $1 OR correlation_id = $1) AND status IN ('PENDING', 'TRANSIT')",
+      [orderId],
+    ).catch(() => ({ rowCount: 0 }));
+    if ((res.rowCount ?? 0) > 0) found = true;
+  }
+  return found;
+}
+
+export async function getTodayOrderStats(targetMode = getTradingMode()) {
+  const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
   const today = new Date().toDateString();
-  // Oldest-first, matching the original ORDER BY ASC — the loop below reads
-  // backwards from the most recent order.
-  const rows = mem.orders.filter((o: any) => new Date(o.created_at).toDateString() === today).slice().reverse();
+  const rows = mem.orders.filter((o: any) => (o.trading_mode || 'paper') === modeKey && new Date(o.created_at).toDateString() === today).slice().reverse();
   let consecutiveLosses = 0;
   for (let i = rows.length - 1; i >= 0; i--) {
     const realized = Number(rows[i].realized_pnl || 0);
@@ -724,6 +764,7 @@ export interface PaperOrderInput {
   stopLoss?: number;
   target?: number;
   trailingStop?: number;
+  tradingMode?: string;
 }
 
 /** Resolves the margin required to hold a position, given price/quantity. */
@@ -804,28 +845,25 @@ function calculateSellUpdate(pos: any, qty: number, price: number) {
   return { buyQty: Number(pos?.buy_qty || 0), buyAvg: curBuyAvg, sellQty: newSellQty, sellAvg: newSellAvg, netQty: curNet - qty, realized };
 }
 
-/** Records one fill in the in-memory order log — the read path for
- * `listPaperOrders`/`getTodayOrderStats` regardless of mode (see header). */
-function pushOrderToMem(orderId: string, sym: string, securityId: string, exchangeSegment: string, input: PaperOrderInput, qty: number, fillPrice: number, latencyMs: number, realizedDelta: number, charges: number): void {
+/** Records one fill in the in-memory order log. */
+function pushOrderToMem(orderId: string, sym: string, securityId: string, exchangeSegment: string, input: PaperOrderInput, qty: number, fillPrice: number, latencyMs: number, realizedDelta: number, charges: number, modeKey = 'paper'): void {
   mem.orders.unshift({
     id: orderId, correlation_id: input.correlationId || `corr_${orderId}`, symbol: sym,
     security_id: securityId, exchange_segment: exchangeSegment,
     transaction_type: input.transactionType, order_type: input.orderType || 'MARKET',
     product_type: input.productType || 'INTRADAY', quantity: qty, price: fillPrice,
     status: 'TRADED', filled_qty: qty, avg_price: fillPrice, latency_ms: latencyMs,
-    realized_pnl: realizedDelta, charges, created_at: new Date(), updated_at: new Date(),
+    realized_pnl: realizedDelta, charges, trading_mode: modeKey, created_at: new Date(), updated_at: new Date(),
   });
   if (mem.orders.length > 500) mem.orders.pop();
 }
 
-/** Applies one fill's computed result to the in-memory cache — the single
- * write path for both Postgres mode (mirror after commit) and memory mode
- * (the only write). Never recomputed independently from the Postgres write. */
-function applyFillToMem(sym: string, u: PositionUpdate, newRealized: number, ltp: number, marginRequired: number, input: PaperOrderInput, charges: number): void {
-  const curPos = mem.positions.get(sym);
+/** Applies one fill's computed result to the in-memory cache. */
+function applyFillToMem(posKeyId: string, sym: string, u: PositionUpdate, newRealized: number, ltp: number, marginRequired: number, input: PaperOrderInput, charges: number, modeKey = 'paper'): void {
+  const curPos = mem.positions.get(posKeyId);
   const marginDelta = marginRequired - Number(curPos?.margin_blocked || 0);
-  mem.positions.set(sym, {
-    id: sym, symbol: sym,
+  mem.positions.set(posKeyId, {
+    id: posKeyId, symbol: sym,
     security_id: input.securityId || curPos?.security_id || '0',
     exchange_segment: input.exchangeSegment || curPos?.exchange_segment || 'NSE_FNO',
     product_type: input.productType || curPos?.product_type || 'INTRADAY',
@@ -835,48 +873,77 @@ function applyFillToMem(sym: string, u: PositionUpdate, newRealized: number, ltp
     stop_loss: input.stopLoss ?? curPos?.stop_loss ?? null,
     target: input.target ?? curPos?.target ?? null,
     trailing_stop: input.trailingStop ?? curPos?.trailing_stop ?? null,
+    trading_mode: modeKey,
     updated_at: new Date(),
   });
-  mem.wallet.realized_pnl = Number(mem.wallet.realized_pnl) + u.realized;
-  mem.wallet.available_margin = Number(mem.wallet.available_margin) + u.realized - marginDelta - charges;
-  mem.wallet.used_margin = Number(mem.wallet.used_margin) + marginDelta;
-  mem.wallet.total_charges = Number(mem.wallet.total_charges || 0) + charges;
-  mem.wallet.updated_at = new Date();
+  const w = getMemWallet(modeKey);
+  w.realized_pnl = Number(w.realized_pnl) + u.realized;
+  w.available_margin = Number(w.available_margin) + u.realized - marginDelta - charges;
+  w.used_margin = Number(w.used_margin) + marginDelta;
+  w.total_charges = Number(w.total_charges || 0) + charges;
+  w.updated_at = new Date();
 }
 
-export async function executePaperOrder(input: PaperOrderInput, marginResolver: MarginResolver = defaultMarginResolver) {
+async function persistPaperFillPostgres(p: {
+  orderId: string; sym: string; securityId: string; exchangeSegment: string;
+  input: PaperOrderInput; qty: number; fillPrice: number; latencyMs: number;
+  realized: number; charges: number; positionId: string; newRealized: number;
+  marginRequired: number; marginDelta: number; modeKey: string; walletId: string;
+  u: PositionUpdate;
+}): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO paper_orders (id, correlation_id, symbol, security_id, exchange_segment, transaction_type, order_type, product_type, quantity, price, status, filled_qty, avg_price, latency_ms, realized_pnl, charges, trading_mode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'TRADED', $9, $10, $11, $12, $13, $14)`,
+      [p.orderId, p.input.correlationId || `corr_${p.orderId}`, p.sym, p.securityId, p.exchangeSegment, p.input.transactionType, p.input.orderType || 'MARKET', p.input.productType || 'INTRADAY', p.qty, p.fillPrice, p.latencyMs, p.realized, p.charges, p.modeKey],
+    );
+    await client.query(
+      `INSERT INTO paper_positions (id, symbol, security_id, exchange_segment, product_type, buy_qty, buy_avg, sell_qty, sell_avg, net_qty, realized_pnl, ltp, margin_blocked, stop_loss, target, trailing_stop, trading_mode, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
+       ON CONFLICT (id) DO UPDATE SET buy_qty = $6, buy_avg = $7, sell_qty = $8, sell_avg = $9, net_qty = $10, realized_pnl = $11, ltp = $12, margin_blocked = $13, stop_loss = COALESCE($14, paper_positions.stop_loss), target = COALESCE($15, paper_positions.target), trailing_stop = COALESCE($16, paper_positions.trailing_stop), trading_mode = $17, updated_at = NOW()`,
+      [p.positionId, p.sym, p.securityId, p.exchangeSegment, p.input.productType || 'INTRADAY', p.u.buyQty, p.u.buyAvg, p.u.sellQty, p.u.sellAvg, p.u.netQty, p.newRealized, p.fillPrice, p.marginRequired, p.input.stopLoss ?? null, p.input.target ?? null, p.input.trailingStop ?? null, p.modeKey],
+    );
+    await client.query(
+      `UPDATE paper_wallet SET realized_pnl = realized_pnl + $1, available_margin = available_margin + $1 - $2 - $3, used_margin = used_margin + $2, total_charges = total_charges + $3, updated_at = NOW() WHERE id = $4`,
+      [p.realized, p.marginDelta, p.charges, p.walletId],
+    );
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+export async function executePaperOrder(input: PaperOrderInput, marginResolver: MarginResolver = defaultMarginResolver, targetMode?: string) {
   const t0 = Date.now();
+  const modeKey = (targetMode || input.tradingMode || getTradingMode()) === 'sandbox' ? 'sandbox' : 'paper';
+  const walletId = modeKey === 'sandbox' ? 'sandbox' : 'default';
   const orderId = `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
   const fillPrice = Number(input.price || 0);
   const qty = Number(input.quantity);
   const sym = input.symbol.toUpperCase();
+  const positionId = posKey(modeKey, sym);
   const securityId = input.securityId || '0';
   const exchangeSegment = input.exchangeSegment || 'NSE_FNO';
 
-  if (!fillPrice || fillPrice <= 0) {
-    throw new Error('Fill price required — paper orders must be priced from live market LTP (pass explicit price for LIMIT orders)');
-  }
-  if (!Number.isInteger(qty) || qty <= 0) {
-    throw new Error(`Invalid quantity ${input.quantity} — must be a positive integer`);
-  }
+  if (!fillPrice || fillPrice <= 0) throw new Error('Fill price required — paper orders must be priced from live market LTP');
+  if (!Number.isInteger(qty) || qty <= 0) throw new Error(`Invalid quantity ${input.quantity} — must be a positive integer`);
 
   const latencyMs = Math.max(1, Date.now() - t0 + Math.floor(Math.random() * 20));
   const charges = calculateOrderCharges(input.transactionType, fillPrice, qty);
 
-  // Single computation from the always-in-sync in-memory snapshot (see
-  // header) — Postgres below persists this exact result, never a second one.
-  const curPos = mem.positions.get(sym);
+  const curPos = mem.positions.get(positionId);
   const u = input.transactionType === 'BUY' ? calculateBuyUpdate(curPos, qty, fillPrice) : calculateSellUpdate(curPos, qty, fillPrice);
   const newRealized = Number(curPos?.realized_pnl || 0) + u.realized;
   const marginRequired = await resolveMarginRequired(u, securityId, exchangeSegment, input.productType || 'INTRADAY', marginResolver);
   const marginDelta = marginRequired - Number(curPos?.margin_blocked || 0);
 
-  // Affordability gate — a real broker rejects an order it can't margin.
-  // Only trades that INCREASE required margin are gated; closing or
-  // reducing a position always goes through (even if the account is
-  // already over-margined) so a position is never un-closeable.
   if (marginDelta > 0) {
-    const availableMargin = computeDerivedMargin().availableMargin;
+    const availableMargin = computeDerivedMargin(modeKey).availableMargin;
     const projectedAvailable = availableMargin + u.realized - marginDelta - charges;
     if (projectedAvailable < 0) {
       throw new Error(`Insufficient margin: need ₹${marginDelta.toFixed(2)} more, ₹${availableMargin.toFixed(2)} available`);
@@ -884,75 +951,40 @@ export async function executePaperOrder(input: PaperOrderInput, marginResolver: 
   }
 
   if (mode === 'postgres') {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      await client.query(
-        `INSERT INTO paper_orders (id, correlation_id, symbol, security_id, exchange_segment, transaction_type, order_type, product_type, quantity, price, status, filled_qty, avg_price, latency_ms, realized_pnl, charges)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'TRADED', $9, $10, $11, $12, $13)`,
-        [orderId, input.correlationId || `corr_${orderId}`, sym, securityId, exchangeSegment, input.transactionType, input.orderType || 'MARKET', input.productType || 'INTRADAY', qty, fillPrice, latencyMs, u.realized, charges],
-      );
-
-      await client.query(
-        `INSERT INTO paper_positions (id, symbol, security_id, exchange_segment, product_type, buy_qty, buy_avg, sell_qty, sell_avg, net_qty, realized_pnl, ltp, margin_blocked, stop_loss, target, trailing_stop, updated_at)
-         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
-         ON CONFLICT (id) DO UPDATE SET buy_qty = $5, buy_avg = $6, sell_qty = $7, sell_avg = $8, net_qty = $9, realized_pnl = $10, ltp = $11, margin_blocked = $12, stop_loss = COALESCE($13, paper_positions.stop_loss), target = COALESCE($14, paper_positions.target), trailing_stop = COALESCE($15, paper_positions.trailing_stop), updated_at = NOW()`,
-        [sym, securityId, exchangeSegment, input.productType || 'INTRADAY', u.buyQty, u.buyAvg, u.sellQty, u.sellAvg, u.netQty, newRealized, fillPrice, marginRequired, input.stopLoss ?? null, input.target ?? null, input.trailingStop ?? null],
-      );
-
-      await client.query(
-        `UPDATE paper_wallet SET realized_pnl = realized_pnl + $1, available_margin = available_margin + $1 - $2 - $3, used_margin = used_margin + $2, total_charges = total_charges + $3, updated_at = NOW() WHERE id = 'default'`,
-        [u.realized, marginDelta, charges],
-      );
-      await client.query('COMMIT');
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
+    await persistPaperFillPostgres({
+      orderId, sym, securityId, exchangeSegment, input, qty, fillPrice, latencyMs,
+      realized: u.realized, charges, positionId, newRealized, marginRequired, marginDelta,
+      modeKey, walletId, u,
+    });
   }
 
-  // Snapshot the session base BEFORE folding this fill's realized PnL in —
-  // otherwise a fill landing before this process's first getPaperWallet()
-  // read of the day would get silently absorbed into the rollover baseline
-  // instead of counted as today's P&L.
-  await ensureWalletSessionRolled();
-  pushOrderToMem(orderId, sym, securityId, exchangeSegment, input, qty, fillPrice, latencyMs, u.realized, charges);
-  applyFillToMem(sym, u, newRealized, fillPrice, marginRequired, input, charges);
+  await ensureWalletSessionRolled(getMemWallet(modeKey));
+  pushOrderToMem(orderId, sym, securityId, exchangeSegment, input, qty, fillPrice, latencyMs, u.realized, charges, modeKey);
+  applyFillToMem(positionId, sym, u, newRealized, fillPrice, marginRequired, input, charges, modeKey);
 
   return {
     orderId, symbol: sym, side: input.transactionType, quantity: qty, fillPrice, charges, status: 'TRADED', latencyMs,
-    // The resulting NET position after this fill — distinct from `quantity`
-    // (this order's qty) and `fillPrice` (this order's price), which are
-    // only equal to the position's own state for a fill into a flat position.
-    // A caller re-arming stop/target monitoring needs these, not the order's.
     netQty: u.netQty,
     avgPrice: u.netQty > 0 ? u.buyAvg : u.netQty < 0 ? u.sellAvg : 0,
+    tradingMode: modeKey,
   };
 }
 
-/**
- * Closes an open paper position at a slipped fill price and emits the same
- * 'order' fill telemetry as PaperExecutionEngine.placeOrder.
- *
- * Every exit path in the system — autonomy's auto-exit on a PositionMonitor
- * signal, strategy loss-limit stops, EOD square-off, the kill switch, and
- * the manual/strategy close routes — calls this function directly rather
- * than going through PaperExecutionEngine. It used to fill at the exact
- * reference price with zero slippage and emit nothing onto the event bus,
- * so every exit was invisible to the risk engine's on-fill re-evaluation,
- * the frontend's live Orders/Positions feed, and the Redis fill bridge —
- * only entries participated in any of that. `kind` lets a caller that knows
- * this is a triggered stop (vs. a target/manual close) price the extra
- * adverse-crossing cost a real stop pays; callers that don't care default
- * to the plain exit cost.
- */
-function findPaperPosition(target: InstrumentKey | string): any | undefined {
-  if (typeof target === 'string') return mem.positions.get(target.toUpperCase());
+function findPaperPosition(target: InstrumentKey | string, targetMode = getTradingMode()): any | undefined {
+  const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
+  if (typeof target === 'string') {
+    const bySym = mem.positions.get(posKey(modeKey, target.toUpperCase()));
+    if (bySym) return bySym;
+    for (const pos of mem.positions.values()) {
+      if ((pos.trading_mode || 'paper') !== modeKey || Number(pos.net_qty) === 0) continue;
+      if (String(pos.security_id) === target || String(pos.symbol).toUpperCase() === target.toUpperCase()) {
+        return pos;
+      }
+    }
+    return undefined;
+  }
   for (const pos of mem.positions.values()) {
-    if (Number(pos.net_qty) === 0) continue;
+    if ((pos.trading_mode || 'paper') !== modeKey || Number(pos.net_qty) === 0) continue;
     if (String(pos.security_id) === String(target.securityId) && String(pos.exchange_segment) === target.exchangeSegment) {
       return pos;
     }
@@ -960,8 +992,9 @@ function findPaperPosition(target: InstrumentKey | string): any | undefined {
   return undefined;
 }
 
-export async function closePaperPosition(target: InstrumentKey | string, currentLtp?: number, marginResolver?: MarginResolver, kind: FillKind = 'EXIT') {
-  const pos = findPaperPosition(target);
+export async function closePaperPosition(target: InstrumentKey | string, currentLtp?: number, marginResolver?: MarginResolver, kind: FillKind = 'EXIT', targetMode?: string) {
+  const modeKey = (targetMode || getTradingMode()) === 'sandbox' ? 'sandbox' : 'paper';
+  const pos = findPaperPosition(target, modeKey);
   if (!pos || Number(pos.net_qty) === 0) return { status: 'noop', message: 'No open position found' };
   const sym = String(pos.symbol).toUpperCase();
   const netQty = Number(pos.net_qty);
@@ -979,15 +1012,17 @@ export async function closePaperPosition(target: InstrumentKey | string, current
     quantity: Math.abs(netQty),
     price: fillPrice,
     correlationId: `close_${sym}_${Date.now()}`,
-  }, marginResolver);
+    tradingMode: modeKey,
+  }, marginResolver, modeKey);
 
   if (result.status === 'TRADED') {
     const fillPayload = {
       correlation_id: result.orderId, is_paper: true, fill_price: result.fillPrice,
       quantity: result.quantity, security_id: pos.security_id, symbol: sym,
       latency_ms: result.latencyMs, charges: result.charges, filled_at: new Date().toISOString(),
+      mode: modeKey,
     };
-    eventBus.log('TRADE', `Paper close ${transactionType} ${result.quantity} ${sym} @ ₹${result.fillPrice.toFixed(2)}`, 'paper_engine');
+    eventBus.log('TRADE', `${modeKey === 'sandbox' ? 'Sandbox' : 'Paper'} close ${transactionType} ${result.quantity} ${sym} @ ₹${result.fillPrice.toFixed(2)}`, 'paper_engine');
     eventBus.emit('order', { kind: 'fill', ...fillPayload });
     journal.append('order_result', { status: 'TRADED', exitKind: kind, ...fillPayload });
     redisPublisher.publish('dhan:execution:fills', JSON.stringify(fillPayload)).catch(() => {});
@@ -1005,17 +1040,15 @@ function computeUnrealized(netQty: number, buyAvg: number, sellAvg: number, ltp:
 
 export interface MarkToMarketResult {
   totalUnrealized: number;
-  /** Positions where the resolver returned null this cycle — marked from a
-   * stale/last-known price, not a fresh quote. Distinct from "confidently
-   * priced" so a feed dropout during market hours is visible instead of
-   * silently smoothed over by reusing an old LTP forever. */
   staleCount: number;
 }
 
-export async function markPositionsToMarket(ltpResolver: (securityId: string, symbol: string) => number | null): Promise<MarkToMarketResult> {
+export async function markPositionsToMarket(ltpResolver: (securityId: string, symbol: string) => number | null, targetMode = getTradingMode()): Promise<MarkToMarketResult> {
+  const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
   let totalUnrealized = 0;
   let staleCount = 0;
   for (const pos of mem.positions.values()) {
+    if ((pos.trading_mode || 'paper') !== modeKey) continue;
     const netQty = Number(pos.net_qty);
     if (netQty === 0) continue;
     const buyAvg = Number(pos.buy_avg), sellAvg = Number(pos.sell_avg);
@@ -1031,8 +1064,9 @@ export async function markPositionsToMarket(ltpResolver: (securityId: string, sy
   return { totalUnrealized, staleCount };
 }
 
-export async function listPaperPositions() {
-  const rows = [...mem.positions.values()];
+export async function listPaperPositions(targetMode = getTradingMode()) {
+  const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
+  const rows = [...mem.positions.values()].filter((r: any) => (r.trading_mode || 'paper') === modeKey);
   return rows.map((r: any) => {
     const netQty = Number(r.net_qty), buyAvg = Number(r.buy_avg), sellAvg = Number(r.sell_avg);
     const cost = netQty >= 0 ? buyAvg : sellAvg, ltp = Number(r.ltp || cost);
@@ -1051,12 +1085,12 @@ export async function listPaperPositions() {
   });
 }
 
-export async function closeAllPaperPositions(ltpResolver: (securityId: string, symbol: string) => number | null) {
+export async function closeAllPaperPositions(ltpResolver: (securityId: string, symbol: string) => number | null, targetMode = getTradingMode()) {
   const results = [];
-  for (const p of await listPaperPositions()) {
+  for (const p of await listPaperPositions(targetMode)) {
     if (p.netQty === 0) continue;
     const ltp = ltpResolver(String(p.securityId), p.tradingSymbol) || p.ltp;
-    results.push(await closePaperPosition({ securityId: String(p.securityId), exchangeSegment: p.exchangeSegment }, ltp));
+    results.push(await closePaperPosition({ securityId: String(p.securityId), exchangeSegment: p.exchangeSegment }, ltp, undefined, 'EXIT', targetMode));
   }
   return results;
 }

@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiRequest } from '../services/api';
-import { useBackendStream, type Envelope } from '../hooks/useBackendStream';
+import { useBackendStream, type Envelope, type Channel } from '../hooks/useBackendStream';
+
+const SCALP_CHANNELS: Channel[] = ['scalp'];
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -368,7 +370,7 @@ export function ScalpMonitor() {
         if (p.config) setConfig(p.config);
         break;
     }
-  }, [refresh]), ['scalp']);
+  }, [refresh]), SCALP_CHANNELS);
 
   useEffect(() => {
     const checkInterval = setInterval(() => {

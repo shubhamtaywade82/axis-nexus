@@ -62,6 +62,7 @@ export function buildSandboxPlaceRequest(input: {
   quantity: number;
   price: number;
   productType: string;
+  dhanClientId?: string;
 }) {
   const asLimit = input.orderType === 'MARKET';
   if (asLimit && !(input.price > 0)) {
@@ -71,6 +72,7 @@ export function buildSandboxPlaceRequest(input: {
   const price = orderType === 'MARKET' ? 0 : input.price;
   const correlationId = input.correlationId ? String(input.correlationId).slice(0, 25) : undefined;
   return {
+    dhanClientId: input.dhanClientId || process.env.DHAN_SANDBOX_CLIENT_ID,
     correlationId,
     securityId: String(input.securityId),
     exchangeSegment: input.exchangeSegment as any,

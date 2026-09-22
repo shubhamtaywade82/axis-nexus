@@ -125,6 +125,12 @@ export const api = {
   portfolioSummary: () => request<any>('/api/portfolio/summary'),
   positions: () => request<any[]>('/api/portfolio/positions'),
   orders: () => request<any[]>('/api/portfolio/orders'),
+  cancelOrder: (orderId: string, correlationId?: string) =>
+    request<any>(`/api/portfolio/orders/${encodeURIComponent(orderId)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ correlationId }),
+    }),
+  cancelAllOrders: () => request<{ cancelledCount: number }>('/api/portfolio/orders/cancel-all', { method: 'POST' }),
   trades: () => request<any[]>('/api/portfolio/trades'),
   funds: () => request<any>('/api/portfolio/funds'),
   holdings: () => request<any[]>('/api/portfolio/holdings'),
