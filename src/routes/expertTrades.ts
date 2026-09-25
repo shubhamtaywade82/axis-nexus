@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import type { ExpertTradeEngine } from '../services/expertTrades/expertTradeEngine';
 import type { ExpertTradeScheduler } from '../services/expertTrades/scheduler';
+import type { RiskEngine } from '../services/riskEngine';
+import type { PortfolioSource } from '../services/portfolioSource';
+import type { PaperExecutionEngine } from '../engines/paper';
 import { getAllClosedExpertTrades, getExpertTrade, getExpertTradesBySymbol, listExpertTrades } from '../services/expertTrades/repository';
 import { computeOutcomeStats } from '../services/expertTrades/analytics';
+import { buildQuickBuyPreview, executeQuickBuy } from '../services/expertTrades/quickBuy';
 import type { ExpertTradeHorizon, ExpertTradeState } from '../services/expertTrades/types';
 
 const OPEN_STATES: ExpertTradeState[] = ['NEW', 'ACTIVE', 'TARGET_1'];
@@ -15,7 +19,13 @@ const ALL_HORIZONS: ExpertTradeHorizon[] = ['SHORT_TERM', 'MID_TERM', 'LONG_TERM
  * Follows the same shape as researchRoutes.ts: thin handlers, business
  * logic lives entirely in services/expertTrades/*.
  */
-export function expertTradesRoutes(engine: ExpertTradeEngine, scheduler?: ExpertTradeScheduler): Router {
+export function expertTradesRoutes(
+  engine: ExpertTradeEngine,
+  paper: PaperExecutionEngine,
+  risk: RiskEngine,
+  portfolio: PortfolioSource,
+  scheduler?: ExpertTradeScheduler,
+): Router {
   const router = Router();
 
   // GET /api/expert-trades - open trade ideas (NEW/ACTIVE/TARGET_1 by default)
@@ -117,6 +127,40 @@ export function expertTradesRoutes(engine: ExpertTradeEngine, scheduler?: Expert
     try {
       const trades = await getExpertTradesBySymbol(req.params.symbol.toUpperCase());
       return res.json({ count: trades.length, trades });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/expert-trades/:id/quick-buy/preview - risk-sized quantity, capital
+  // required, max loss, target profit and a risk-gate check — no order placed.
+  router.get('/:id/quick-buy/preview', async (req, res) => {
+    try {
+      const trade = await getExpertTrade(req.params.id);
+      if (!trade) return res.status(404).json({ error: `Expert trade ${req.params.id} not found` });
+      const riskPerTradeInr = req.query.riskPerTradeInr ? Number(req.query.riskPerTradeInr) : undefined;
+      const preview = await buildQuickBuyPreview(trade, risk, portfolio, riskPerTradeInr);
+      return res.json(preview);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/expert-trades/:id/quick-buy - places a risk-sized paper CNC BUY.
+  // Quantity is always server-computed (see quickBuy.ts) — the client can
+  // request a different risk budget, never a specific quantity, so the
+  // sizing rule can't be bypassed from the frontend.
+  router.post('/:id/quick-buy', async (req, res) => {
+    try {
+      const trade = await getExpertTrade(req.params.id);
+      if (!trade) return res.status(404).json({ error: `Expert trade ${req.params.id} not found` });
+      const riskPerTradeInr = req.body?.riskPerTradeInr ? Number(req.body.riskPerTradeInr) : undefined;
+      const result = await executeQuickBuy(trade, paper, riskPerTradeInr);
+      // `error` alongside the full result — matches this API's usual
+      // {error} convention (so the frontend's generic error handling
+      // surfaces `reason` correctly) while still returning every field.
+      if (result.status === 'REJECTED') return res.status(422).json({ error: result.reason, ...result });
+      return res.status(200).json(result);
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }

@@ -36,9 +36,11 @@ function axisPosition(trade: ExpertTrade): number {
   return Math.min(1, Math.max(0, (price - stopLoss) / (target2 - stopLoss)));
 }
 
-export function ExpertTradeCard({ trade, onViewDetail }: { trade: ExpertTrade; onViewDetail?: (id: string) => void }) {
+export function ExpertTradeCard({ trade, onViewDetail, onQuickBuy }: { trade: ExpertTrade; onViewDetail?: (id: string) => void; onQuickBuy?: (trade: ExpertTrade) => void }) {
   const style = STATE_STYLE[trade.state];
-  const isOpen = trade.state === 'NEW' || trade.state === 'ACTIVE' || trade.state === 'TARGET_1';
+  // Quick Buy only makes sense before the setup has already run past its
+  // first target — matches the backend's own eligibility rule (quickBuy.ts).
+  const canQuickBuy = (trade.state === 'NEW' || trade.state === 'ACTIVE') && !trade.execution;
   const price = trade.lastEvaluatedPrice ?? trade.levels.current;
 
   const pnlPct = trade.triggeredAt != null
@@ -56,6 +58,11 @@ export function ExpertTradeCard({ trade, onViewDetail }: { trade: ExpertTrade; o
           {!trade.setup.intradayAligned && (
             <div className="text-[9px] font-mono text-gold mt-0.5 flex items-center gap-1">
               <ShieldAlert size={10} /> 60m structure not yet confirming — daily setup only
+            </div>
+          )}
+          {trade.execution && (
+            <div className="text-[9px] font-mono text-accent mt-0.5">
+              Bought {trade.execution.quantity} @ ₹{fmt(trade.execution.fillPrice)} (paper)
             </div>
           )}
         </div>
@@ -101,7 +108,11 @@ export function ExpertTradeCard({ trade, onViewDetail }: { trade: ExpertTrade; o
 
       <div className="flex gap-2">
         <Button variant="ghost" className="flex-1" onClick={() => onViewDetail?.(trade.id)}>View Setup</Button>
-        {isOpen && <Button variant="primary" className="flex-1 bg-sky hover:bg-sky/80 text-black font-semibold">Quick Buy</Button>}
+        {canQuickBuy && (
+          <Button variant="primary" className="flex-1 bg-sky hover:bg-sky/80 text-black font-semibold" onClick={() => onQuickBuy?.(trade)}>
+            Quick Buy
+          </Button>
+        )}
       </div>
     </Card>
   );

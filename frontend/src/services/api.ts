@@ -1,5 +1,5 @@
 import { log } from './logger';
-import type { ExpertTrade, ExpertTradeScanSummary, ExpertTradeSchedulerStatus, ExpertTradeStatsResponse } from '../types/expertTrades';
+import type { ExpertTrade, ExpertTradeScanSummary, ExpertTradeSchedulerStatus, ExpertTradeStatsResponse, QuickBuyPreview, QuickBuyResult } from '../types/expertTrades';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -267,4 +267,8 @@ export const api = {
   expertTradesForSymbol: (symbol: string) =>
     request<{ count: number; trades: ExpertTrade[] }>(`/api/expert-trades/symbol/${symbol}`),
   expertTrade: (id: string) => request<ExpertTrade>(`/api/expert-trades/${id}`),
+  expertTradeQuickBuyPreview: (id: string, riskPerTradeInr?: number) =>
+    request<QuickBuyPreview>(`/api/expert-trades/${id}/quick-buy/preview${riskPerTradeInr ? `?riskPerTradeInr=${riskPerTradeInr}` : ''}`),
+  expertTradeQuickBuy: (id: string, riskPerTradeInr?: number) =>
+    request<QuickBuyResult>(`/api/expert-trades/${id}/quick-buy`, { method: 'POST', body: JSON.stringify({ riskPerTradeInr }) }),
 };
