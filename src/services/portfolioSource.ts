@@ -242,6 +242,8 @@ export class PaperPortfolioSource implements PortfolioSource {
 
 // ── broker ───────────────────────────────────────────────────────────────
 
+const OPTION_TICK_RUPEES = 0.05;
+
 function normalizeBrokerPosition(p: any): NormalizedPosition {
   const netQty = Number(p.netQty ?? 0);
   const buyAvg = Number(p.buyAvg ?? 0);
@@ -616,9 +618,14 @@ export class BrokerPortfolioSource implements PortfolioSource {
     if (this.brokerMode() === 'sandbox') {
       const mark = await markPositionsToMarket(ltpResolver, 'sandbox');
       await this.maybeRefreshBrokerSnapshot(false);
-      const brokerUnrealized = markBrokerPositionsToMarket(this.cachedPositions, ltpResolver);
+      markBrokerPositionsToMarket(this.cachedPositions, ltpResolver);
       const brokerOpen = this.cachedPositions.filter((p) => p.netQty !== 0);
       const paperOpen = (await listPaperPositions('sandbox')).filter((p) => Number(p.netQty ?? 0) !== 0);
+      // Every sandbox fill is mirrored into the paper ledger, so a leg open in
+      // both books must be counted once — only broker-only legs add on top.
+      const brokerOnlyUnrealized = brokerOpen
+        .filter((b) => !paperOpen.some((pp) => keysMatch(toInstrumentKey(b), toInstrumentKey(pp as unknown as NormalizedPosition))))
+        .reduce((sum, b) => sum + b.unrealizedProfit, 0);
       if (brokerOpen.length === 0 && paperOpen.length > 0) {
         const pw = await getPaperWallet('sandbox').catch(() => null);
         if (pw) {
@@ -632,7 +639,7 @@ export class BrokerPortfolioSource implements PortfolioSource {
         this.cachedWallet.availableMargin = total;
         this.cachedWallet.totalBalance = total;
       }
-      const combined = Number((mark.totalUnrealized + brokerUnrealized).toFixed(2));
+      const combined = Number((mark.totalUnrealized + brokerOnlyUnrealized).toFixed(2));
       this.cachedWallet.unrealizedPnl = combined;
       this.cachedWallet.equity = Number((this.cachedWallet.totalBalance + combined).toFixed(2));
       return { totalUnrealized: combined, staleCount: mark.staleCount };
@@ -673,7 +680,7 @@ export class BrokerPortfolioSource implements PortfolioSource {
 
   private async closeSandboxPaperOnly(pos: NormalizedPosition, reason: string): Promise<CloseResult> {
     const fallbackPrice = pos.costPrice || pos.buyAvg || pos.sellAvg || 100;
-    const limitPrice = roundToTick(pos.ltp > 0 ? pos.ltp : fallbackPrice, 5);
+    const limitPrice = roundToTick(pos.ltp > 0 ? pos.ltp : fallbackPrice, OPTION_TICK_RUPEES);
     const paperClose = await closePaperPosition(toInstrumentKey(pos), limitPrice, async () => 0, 'EXIT', 'sandbox');
     if (paperClose.status !== 'TRADED') {
       return { status: 'REJECTED', symbol: pos.tradingSymbol, reason: paperClose.message || 'Paper close failed' };
@@ -709,7 +716,7 @@ export class BrokerPortfolioSource implements PortfolioSource {
     const transactionType = pos.netQty > 0 ? 'SELL' : 'BUY';
     const qty = Math.min(quantity ?? Math.abs(pos.netQty), Math.abs(pos.netQty));
     const fallbackPrice = pos.costPrice || pos.buyAvg || pos.sellAvg || 100;
-    const limitPrice = roundToTick(pos.ltp > 0 ? pos.ltp : fallbackPrice, 5);
+    const limitPrice = roundToTick(pos.ltp > 0 ? pos.ltp : fallbackPrice, OPTION_TICK_RUPEES);
     pos = await this.resolvePositionForClose(pos);
 
     if (!isValidSecurityId(pos.securityId)) {
@@ -736,8 +743,16 @@ export class BrokerPortfolioSource implements PortfolioSource {
         };
       const placed: any = await this.client.orders.place(placeReq);
       const orderId = placed?.data?.orderId ?? placed?.orderId;
-      const settled: any = orderId ? await this.client.orders.getById(orderId).catch(() => placed?.data ?? placed) : placed?.data ?? placed;
-      const fillPrice = Number(settled?.averagePrice ?? settled?.price ?? 0) || undefined;
+      const settledRaw: any = orderId ? await this.client.orders.getById(orderId).catch(() => placed?.data ?? placed) : placed?.data ?? placed;
+      const settled: any = Array.isArray(settledRaw) ? settledRaw[0] : (settledRaw?.data ?? settledRaw);
+      const settledStatus = String(settled?.orderStatus ?? '');
+      if (settledStatus === 'REJECTED' || settledStatus === 'CANCELLED') {
+        const reason = settled?.omsErrorDescription || `Close order ${settledStatus.toLowerCase()}`;
+        eventBus.log('ERROR', `Broker close ${settledStatus} for ${pos.tradingSymbol}: ${reason}`, 'portfolio_source');
+        journal.append('order_result', { correlation_id: correlationId, status: 'REJECTED', reason, mode, order_id: orderId });
+        return { status: 'REJECTED', symbol: pos.tradingSymbol, orderId, reason };
+      }
+      const fillPrice = Number(settled?.averageTradedPrice ?? settled?.averagePrice ?? settled?.price ?? 0) || undefined;
 
       const fillPayload = {
         correlation_id: correlationId, mode, is_paper: false, symbol: pos.tradingSymbol,

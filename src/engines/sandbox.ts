@@ -175,7 +175,8 @@ export class SandboxExecutionEngine {
 
       const avgTraded = Number(settled?.averageTradedPrice ?? settled?.averagePrice ?? 0);
       const fillPrice = avgTraded > 0 ? avgTraded : limitPrice;
-      const filledQty = Number(settled?.filledQty ?? qty);
+      const reportedQty = Number(settled?.filledQty ?? qty);
+      const filledQty = reportedQty > 0 ? reportedQty : qty;
 
       const fillPayload = {
         intent_id,
@@ -183,7 +184,7 @@ export class SandboxExecutionEngine {
         mode: 'sandbox' as const,
         is_paper: isMockFallback,
         fill_price: fillPrice,
-        quantity: filledQty > 0 ? filledQty : qty,
+        quantity: filledQty,
         security_id: secId,
         order_id: orderId,
         filled_at: new Date().toISOString(),
@@ -202,14 +203,17 @@ export class SandboxExecutionEngine {
         transactionType: transaction_type,
         orderType: order_type,
         productType: params.product_type || 'INTRADAY',
-        quantity: filledQty > 0 ? filledQty : qty,
+        quantity: filledQty,
         price: fillPrice,
         correlationId: correlation_id.slice(0, 25),
         stopLoss: risk_limits?.stop_loss,
         target: risk_limits?.target,
         trailingStop: risk_limits?.trailing_stop,
         tradingMode: 'sandbox',
-      }, async () => 0, 'sandbox').catch(() => {});
+      }, async () => 0, 'sandbox').catch((e: any) => {
+        // Broker filled but the local ledger (sandbox P&L source) did not.
+        eventBus.log('ERROR', `Sandbox fill ${orderId} NOT recorded in ledger: ${e.message}`, 'sandbox_engine');
+      });
 
       if (risk_limits && (risk_limits.stop_loss || risk_limits.trailing_stop || risk_limits.target)) {
         this.market.monitor.track({
@@ -251,18 +255,31 @@ export class SandboxExecutionEngine {
    * cannot go through portfolio.closePosition() like the other two modes.
    */
   async closeLeg(leg: { securityId: string; exchangeSegment?: string; qty: number; side: 'BUY' | 'SELL'; instrument?: string }, price: number, correlationId: string = `u_${leg.securityId}_${Date.now().toString(36)}`.slice(0, 25)): Promise<{ status: string; orderId?: string }> {
-    const placed = await this.client.orders.place(buildSandboxPlaceRequest({
-      correlationId,
-      securityId: String(leg.securityId),
-      exchangeSegment: leg.exchangeSegment || 'NSE_FNO',
-      transactionType: leg.side === 'BUY' ? 'SELL' : 'BUY',
-      orderType: 'MARKET',
-      quantity: leg.qty,
-      price,
-      productType: 'INTRADAY',
-    })).catch(() => null);
-    const orderId = placed?.data?.orderId || `sbx_u_${Date.now().toString(36)}`;
-    await closePaperPosition({ securityId: String(leg.securityId), exchangeSegment: leg.exchangeSegment || 'NSE_FNO' }, price, async () => 0, 'EXIT', 'sandbox').catch(() => {});
+    let orderId: string;
+    try {
+      const placed = await this.client.orders.place(buildSandboxPlaceRequest({
+        correlationId,
+        securityId: String(leg.securityId),
+        exchangeSegment: leg.exchangeSegment || 'NSE_FNO',
+        transactionType: leg.side === 'BUY' ? 'SELL' : 'BUY',
+        orderType: 'MARKET',
+        quantity: leg.qty,
+        price,
+        productType: 'INTRADAY',
+      }));
+      orderId = String(placed?.data?.orderId || (placed as any)?.orderId || `sbx_u_${Date.now().toString(36)}`);
+    } catch (e: any) {
+      // DH-905 legs were filled locally only (see placeOrder) — the broker
+      // never held them, so closing the ledger alone is correct. Anything
+      // else means the real sandbox leg is still open: report the failure.
+      if ((e.errorCode || e.details?.errorCode) !== 'DH-905') {
+        eventBus.log('ERROR', `Sandbox unwind FAILED for ${leg.securityId}: ${e.message}`, 'sandbox_engine');
+        return { status: 'REJECTED' };
+      }
+      orderId = `sbx_u_${Date.now().toString(36)}`;
+    }
+    await closePaperPosition({ securityId: String(leg.securityId), exchangeSegment: leg.exchangeSegment || 'NSE_FNO' }, price, async () => 0, 'EXIT', 'sandbox')
+      .catch((e: any) => eventBus.log('ERROR', `Sandbox unwind ${orderId} NOT recorded in ledger: ${e.message}`, 'sandbox_engine'));
     this.risk.getPortfolio().invalidate();
     return { status: 'TRADED', orderId };
   }

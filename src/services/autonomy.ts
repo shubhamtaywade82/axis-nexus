@@ -15,6 +15,7 @@ import {
   reconcileLedger, correctLedgerFromPostgres, closeParentStrategyIfFlat,
 } from '../db';
 import { PaperPortfolioSource, type NormalizedPosition, type PortfolioSource } from './portfolioSource';
+import type { FillKind } from './fillModel';
 import { shouldEmitKeyedLog } from '../lib/logPolicy';
 import { getTradingMode, isSandboxMode } from '../lib/tradingMode';
 
@@ -199,8 +200,10 @@ export class AutonomyEngine {
         await this.enforceStrategyLimits();
 
         if (clock.squareOffWindow && !this.eodDone && !this.risk.isKilled()) {
-          await this.squareOffAll('EOD square-off window (15:20 IST)');
-          this.eodDone = true;
+          // Latch only once the book is actually flat — a rejected close
+          // (rate limit, broker reject) must be retried next cycle.
+          const { failed } = await this.squareOffAll('EOD square-off window (15:20 IST)');
+          this.eodDone = failed === 0;
         }
 
         await this.evaluateAutonomousScan(clock);
@@ -253,14 +256,12 @@ export class AutonomyEngine {
       const positions = await this.portfolio.getPositions();
       const pos = positions.find((x) => String(x.securityId) === String(p.securityId) && x.netQty !== 0);
       if (pos) {
-        const ltp = this.market.getFillablePrice(String(pos.securityId), { allowClosed: true }) ?? this.market.getLtp(String(pos.securityId)) ?? pos.ltp;
         // A triggered stop (hard SL or trailing) crosses the spread on the
         // adverse move that fired it — priced with extra slippage vs. a
         // target hit or a manual close, which fill more like a resting order.
         const kind = p.reason === 'stop_loss' || p.reason === 'trailing_stop' ? 'STOP' : 'EXIT';
-        const res = await this.portfolio.closePosition({ securityId: String(pos.securityId), exchangeSegment: pos.exchangeSegment }, ltp, kind);
-        this.market.monitor.untrack(pos.exchangeSegment, String(pos.securityId));
-        eventBus.log('TRADE', `Auto-exit ${pos.tradingSymbol}: ${res.status} @ ₹${ltp} (${p.reason})`, 'autonomy');
+        const closed = await this.closeAndUntrack(pos, kind);
+        eventBus.log(closed ? 'TRADE' : 'ERROR', `Auto-exit ${pos.tradingSymbol}: ${closed ? 'closed' : 'FAILED — still monitored'} (${p.reason})`, 'autonomy');
         await closeParentStrategyIfFlat(pos.tradingSymbol, await this.portfolio.getPositions());
       }
     } catch (e: any) {
@@ -503,32 +504,43 @@ export class AutonomyEngine {
   private async closeStrategyLegs(strat: any, positions: any[]): Promise<void> {
     for (const leg of strat.legs || []) {
       const pos = positions.find((p) => p.tradingSymbol === leg.instrument);
-      if (pos && pos.netQty !== 0) {
-        const ltp = this.market.getFillablePrice(String(pos.securityId), { allowClosed: true }) ?? this.market.getLtp(String(pos.securityId)) ?? pos.ltp;
-        await this.portfolio.closePosition({ securityId: String(leg.securityId || pos.securityId), exchangeSegment: leg.exchangeSegment || pos.exchangeSegment }, ltp).catch(() => {});
-        this.market.monitor.untrack(pos.exchangeSegment, String(pos.securityId));
-      }
+      if (pos && pos.netQty !== 0) await this.closeAndUntrack(pos);
     }
   }
 
-  async squareOffAll(reason: string): Promise<number> {
+  /** Closes one position; untracks its monitor only once the close landed,
+   * so a rejected exit keeps its stop-loss protection armed. */
+  private async closeAndUntrack(pos: NormalizedPosition, kind?: FillKind): Promise<boolean> {
+    const ltp = this.market.getFillablePrice(String(pos.securityId), { allowClosed: true }) ?? this.market.getLtp(String(pos.securityId)) ?? pos.ltp;
+    const res = await this.portfolio
+      .closePosition({ securityId: String(pos.securityId), exchangeSegment: pos.exchangeSegment }, ltp, kind)
+      .catch((e: any) => ({ status: 'REJECTED' as const, reason: e.message }));
+    if (res.status !== 'TRADED' && res.status !== 'noop') {
+      eventBus.log('ERROR', `Close ${pos.tradingSymbol} failed: ${res.reason || res.status}`, 'autonomy');
+      return false;
+    }
+    this.market.monitor.untrack(pos.exchangeSegment, String(pos.securityId));
+    return true;
+  }
+
+  async squareOffAll(reason: string): Promise<{ closed: number; failed: number }> {
     eventBus.log('WARN', `Square-off triggered: ${reason}`, 'autonomy');
     const positions = await this.portfolio.getPositions();
     let closed = 0;
+    let failed = 0;
     for (const pos of positions) {
       if (pos.netQty === 0) continue;
-      const ltp = this.market.getFillablePrice(String(pos.securityId), { allowClosed: true }) ?? this.market.getLtp(String(pos.securityId)) ?? pos.ltp;
-      await this.portfolio.closePosition({ securityId: String(pos.securityId), exchangeSegment: pos.exchangeSegment }, ltp).catch(() => {});
-      this.market.monitor.untrack(pos.exchangeSegment, String(pos.securityId));
-      closed++;
+      if (await this.closeAndUntrack(pos)) closed++;
+      else failed++;
     }
     for (const s of await listPaperStrategies()) {
       if (s.status === 'RUNNING') await updatePaperStrategyStatus(s.id, 'STOPPED');
     }
-    eventBus.log('TRADE', `Square-off complete: ${closed} position(s) closed`, 'autonomy');
-    journal.append('eod', { reason, closed });
+    eventBus.log(failed ? 'ERROR' : 'TRADE', `Square-off: ${closed} closed, ${failed} failed`, 'autonomy');
+    // The journal 'eod' entry is the restart latch — write it only once flat.
+    if (failed === 0) journal.append('eod', { reason, closed });
     await this.publishPortfolioSnapshot();
-    return closed;
+    return { closed, failed };
   }
 
   stop(): void {

@@ -54,6 +54,19 @@ describe('LiveExecutionEngine.placeOrder', () => {
     expect(portfolio.invalidate).toHaveBeenCalledTimes(1);
   });
 
+  it('should not report a fill or arm stop-loss monitoring when the broker rejects', async () => {
+    const { live, market, portfolio } = setup({ status: 'REJECTED', filledQuantity: 0, averagePrice: 0 });
+    const trackSpy = jest.spyOn(market.monitor, 'track');
+    const res = await live.placeOrder({
+      correlation_id: 'corr_rej', intent_id: 'ir',
+      params: { security_id: '11111', quantity: 50, transaction_type: 'BUY' },
+      risk_limits: { stop_loss: 90 },
+    });
+    expect(res.status).toBe('REJECTED');
+    expect(trackSpy).not.toHaveBeenCalled();
+    expect(portfolio.recordOrderOutcome).toHaveBeenCalledWith({ status: 'REJECTED' });
+  });
+
   it('tracks a BUY (long) fill with a positive signed quantity', async () => {
     const { live, market } = setup({ status: 'TRADED', filledQuantity: 50, averagePrice: 100 });
     await live.placeOrder({

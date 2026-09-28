@@ -50,18 +50,18 @@ describe('SandboxExecutionEngine.placeOrder', () => {
   it('uses lot size and tick size from the scrip master, not the caller-supplied values', async () => {
     const { sandbox, client } = setup({ orderStatus: 'TRADED', averagePrice: 100, filledQty: 65 });
     jest.spyOn(sandboxInstruments, 'resolveSandboxOptionLeg').mockResolvedValue({
-      securityId: '46026', quantity: 65, exchangeSegment: 'NSE_FNO', tickSize: 5,
+      securityId: '46026', quantity: 65, exchangeSegment: 'NSE_FNO', tickSize: 0.05,
     });
     const res = await sandbox.placeOrder({
       correlation_id: 'corr3', intent_id: 'i3',
       params: {
-        security_id: '46026', quantity: 10, transaction_type: 'BUY', price: 123,
+        security_id: '46026', quantity: 10, transaction_type: 'BUY', price: 123.02,
         exchange_segment: 'NSE_FNO',
       },
     });
     expect(res.status).toBe('TRADED');
     expect(client.orders.place).toHaveBeenCalledWith(expect.objectContaining({
-      securityId: '46026', quantity: 65, orderType: 'LIMIT', price: 125,
+      securityId: '46026', quantity: 65, orderType: 'LIMIT', price: 123,
     }));
   });
 

@@ -82,7 +82,7 @@ export function AgentToolsMemory() {
       <div className="space-y-4">
         <Card className="p-4 space-y-3">
           <div className="text-xs font-bold text-white border-b border-border pb-2">Agent Memory System (Pillar 3: Memory)</div>
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             <div className="bg-surface-50 p-2.5 rounded border border-border">
               <div className="text-[8.5px] font-mono text-sky uppercase mb-1 font-semibold">Working Memory</div>
               <div className="text-[9px] text-muted">Current run context (in-memory).</div>

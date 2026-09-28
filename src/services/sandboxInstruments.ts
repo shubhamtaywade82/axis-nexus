@@ -1,7 +1,5 @@
 import type { DhanClient } from '@nemesis-oss/dhanhq-sdk';
-import {
-  clearDhanRateLimit, isDhanRateLimited, isRateLimitError, noteDhanRateLimit,
-} from '../lib/dhanRateLimit';
+import { isDhanRateLimited, isRateLimitError, noteDhanRateLimit } from '../lib/dhanRateLimit';
 
 export type SandboxLegInput = {
   securityId: string | number;
@@ -42,14 +40,23 @@ export async function resolveSandboxOptionLeg(
     securityId: String(instrument.securityId),
     quantity: lot,
     exchangeSegment: input.exchangeSegment,
-    tickSize: Number(instrument.tickSize) || 0.05,
+    tickSize: tickSizeInRupees(Number(instrument.tickSize)),
     displayName: instrument.displayName,
   };
 }
 
+/** Dhan's scrip master reports TICK_SIZE in paise (5 = ₹0.05); treating it
+ * as rupees rounded every sandbox limit price to a ₹5 multiple. Values < 1
+ * are assumed to already be rupees. */
+export function tickSizeInRupees(rawTick: number): number {
+  if (!(rawTick > 0)) return 0.05;
+  return rawTick >= 1 ? rawTick / 100 : rawTick;
+}
+
 export function roundToTick(price: number, tickSize: number): number {
   if (!(tickSize > 0)) return price;
-  return Math.round(price / tickSize) * tickSize;
+  // toFixed strips float noise (123.45 / 0.05 * 0.05 → 123.45000000000002).
+  return Number((Math.round(price / tickSize) * tickSize).toFixed(2));
 }
 
 /** POST /v2/orders body for sandbox — MARKET is rejected, route as LIMIT. */

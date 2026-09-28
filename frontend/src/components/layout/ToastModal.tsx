@@ -11,7 +11,7 @@ export function ToastContainer() {
   const { toasts } = useApp();
 
   return (
-    <div className="fixed top-4 right-4 z-[10000] flex flex-col gap-1.5">
+    <div className="fixed top-4 left-4 right-4 sm:left-auto z-[10000] flex flex-col items-end gap-1.5">
       {toasts.map((t) => {
         const Icon = icons[t.type];
         return (

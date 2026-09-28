@@ -168,6 +168,7 @@ export class ScalpPositionManager {
       positionId,
       tradingSymbol: entry.tradingSymbol,
       securityId: entry.securityId,
+      exchangeSegment: entry.exchangeSegment,
       underlying: entry.underlying,
       side: entry.side,
       entryPrice: entry.entryPrice,
@@ -263,17 +264,12 @@ export class ScalpPositionManager {
       : (state.entryPrice - exitPrice) * state.quantity;
     const netPnl = grossPnl - fees.total;
 
-    // Close the position via PortfolioSource
-    try {
-      await this.portfolio.closePosition(
-        { securityId: state.securityId, exchangeSegment: 'NSE_FNO' },
-        exitPrice,
-        'EXIT',
-      );
-    } catch (e: any) {
-      eventBus.log('ERROR', `Scalp exit FAILED for ${state.tradingSymbol}: ${e.message}`, 'scalp');
-      // Don't remove from tracking — retry on next tick
-      return;
+    const close = await this.portfolio
+      .closePosition({ securityId: state.securityId, exchangeSegment: state.exchangeSegment || 'NSE_FNO' }, exitPrice, 'EXIT')
+      .catch((e: any) => ({ status: 'REJECTED' as const, reason: e.message }));
+    if (close.status !== 'TRADED' && close.status !== 'noop') {
+      eventBus.log('ERROR', `Scalp exit FAILED for ${state.tradingSymbol}: ${close.reason || close.status}`, 'scalp');
+      return; // keep tracking — retry on next tick
     }
 
     // Record the trade

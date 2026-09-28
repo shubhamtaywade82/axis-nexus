@@ -42,7 +42,7 @@ export function Dashboard({ onNavigate, onDeploy }: DashboardProps) {
       <MetricsGrid state={state} totalPnl={totalPnl} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="col-span-2 p-4 h-[320px] flex flex-col">
+        <Card className="lg:col-span-2 p-4 h-[280px] md:h-[320px] flex flex-col">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="text-[9.5px] font-mono text-muted uppercase tracking-widest font-semibold">Intraday P&L Performance Curve</span>
@@ -117,7 +117,7 @@ export function Dashboard({ onNavigate, onDeploy }: DashboardProps) {
           </div>
         </Card>
 
-        <Card className="col-span-2 p-4">
+        <Card className="lg:col-span-2 p-4">
           <div className="flex items-center justify-between mb-3">
             <span className="text-[9.5px] font-mono text-muted uppercase tracking-widest font-semibold">Recent Order Fills (Audit Stream)</span>
             <button className="text-[10px] font-mono text-accent hover:underline" onClick={() => onNavigate("orders")}>Full Order Book →</button>

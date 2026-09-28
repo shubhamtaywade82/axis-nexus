@@ -142,9 +142,9 @@ export function controlRoutes(
         return res.status(400).json({ error: zodError(parsed.error) });
       }
       const reason = parsed.data?.reason || 'Manual square-off from control plane';
-      const closed = await autonomy.squareOffAll(reason);
-      journal.append('control_command', { route: 'POST /square-off', reason, closed });
-      res.json({ status: 'ok', closed });
+      const { closed, failed } = await autonomy.squareOffAll(reason);
+      journal.append('control_command', { route: 'POST /square-off', reason, closed, failed });
+      res.json({ status: failed ? 'partial' : 'ok', closed, failed });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

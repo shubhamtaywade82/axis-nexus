@@ -23,15 +23,18 @@ export interface Envelope {
 
 interface StreamState {
   connected: boolean;
-  lastMessageAt: number | null;
 }
+
+// Short first retry so a backend restart reconnects in ~1s, not 3s+.
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 15000;
 
 export function useBackendStream(
   onEnvelope: (env: Envelope) => void,
   channels?: Channel[],
 ) {
   const wsRef = useRef<WebSocket | null>(null);
-  const [state, setState] = useState<StreamState>({ connected: false, lastMessageAt: null });
+  const [state, setState] = useState<StreamState>({ connected: false });
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retriesRef = useRef(0);
   const onEnvelopeRef = useRef(onEnvelope);
@@ -61,7 +64,7 @@ export function useBackendStream(
           return;
         }
         retriesRef.current = 0;
-        setState((s) => ({ ...s, connected: true }));
+        setState({ connected: true });
         log.info('Telemetry stream connected', { source: 'ws' });
         ws.send(JSON.stringify({
           type: 'subscribe',
@@ -71,8 +74,9 @@ export function useBackendStream(
 
       ws.onmessage = (event) => {
         try {
+          // No setState here: a per-message state update re-rendered the
+          // whole provider on every tick, defeating AppContext's rAF batching.
           const env: Envelope = JSON.parse(event.data);
-          setState((s) => ({ ...s, lastMessageAt: Date.now() }));
           if (env && env.channel) {
             onEnvelopeRef.current(env);
           }
@@ -82,9 +86,9 @@ export function useBackendStream(
       };
 
       ws.onclose = () => {
-        setState((s) => ({ ...s, connected: false }));
+        setState({ connected: false });
         if (!isMountedRef.current) return;
-        const delay = Math.min(30000, 3000 * Math.pow(1.6, retriesRef.current++));
+        const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(1.6, retriesRef.current++));
         log.warn('Telemetry stream disconnected — reconnecting', {
           source: 'ws',
           attempt: retriesRef.current,
@@ -100,7 +104,7 @@ export function useBackendStream(
     } catch {
       if (isMountedRef.current) {
         if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-        reconnectTimer.current = setTimeout(connect, 3000);
+        reconnectTimer.current = setTimeout(connect, RECONNECT_BASE_MS);
       }
     }
   }, []);
@@ -118,7 +122,19 @@ export function useBackendStream(
   useEffect(() => {
     isMountedRef.current = true;
     connect();
+    // Browsers throttle timers in background tabs and drop sockets on network
+    // changes — reconnect immediately when the tab/network comes back.
+    const reconnectNow = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      retriesRef.current = 0;
+      connect();
+    };
+    window.addEventListener('online', reconnectNow);
+    document.addEventListener('visibilitychange', reconnectNow);
     return () => {
+      window.removeEventListener('online', reconnectNow);
+      document.removeEventListener('visibilitychange', reconnectNow);
       isMountedRef.current = false;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       if (wsRef.current) {

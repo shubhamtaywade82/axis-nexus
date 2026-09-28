@@ -57,9 +57,12 @@ function AppInner() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  const [isNavOpen, setIsNavOpen] = useState(false);
+
   const handleNavigate = useCallback((id: string) => {
     location.hash = id;
     setPage(id);
+    setIsNavOpen(false);
   }, []);
 
   const handleKillSwitch = useCallback(() => {
@@ -135,7 +138,7 @@ function AppInner() {
         </div>
       </div>,
     );
-  }, [openModal, closeModal, setState, addSystemLog, showToast]);
+  }, [openModal, closeModal, setState, addSystemLog, showToast, refreshPortfolio, refreshControlState]);
 
   const [title, subtitle] = PAGE_TITLES[page] || ["Overview", ""];
 
@@ -217,6 +220,7 @@ function AppInner() {
                 setState,
                 addSystemLog,
                 showToast,
+                refreshPortfolio,
               )
             }
           />
@@ -225,17 +229,18 @@ function AppInner() {
   };
 
   return (
-    <div className="bg-grid flex flex-col h-screen overflow-hidden">
+    <div className="bg-grid flex flex-col h-dvh overflow-hidden">
       <ToastContainer />
       <ModalContainer />
       <Header
         pageTitle={title}
         pageSubtitle={subtitle}
         onKillSwitch={handleKillSwitch}
+        onToggleMenu={() => setIsNavOpen((open) => !open)}
       />
-      <div className="flex-1 flex overflow-hidden">
-        <Sidebar activePage={page} onNavigate={handleNavigate} />
-        <main className="flex-1 overflow-y-auto p-5">{renderPage()}</main>
+      <div className="flex-1 flex overflow-hidden relative">
+        <Sidebar activePage={page} onNavigate={handleNavigate} isOpen={isNavOpen} onClose={() => setIsNavOpen(false)} />
+        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 md:p-5">{renderPage()}</main>
       </div>
     </div>
   );

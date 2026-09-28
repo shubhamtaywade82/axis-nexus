@@ -3,6 +3,8 @@ import { fmt } from '../utils/formatters';
 
 export interface PnlPoint { t: number; v: number }
 
+const MIN_AXIS_SPAN_INR = 100;
+
 export function usePnlChart(data: PnlPoint[]) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -36,9 +38,16 @@ export function usePnlChart(data: PnlPoint[]) {
     ctx.clearRect(0, 0, w, h);
 
     const values = data.map((p) => p.v);
-    const min = Math.min(...values, 0);
-    const max = Math.max(...values);
-    const range = max - min || 1;
+    let min = Math.min(...values, 0);
+    let max = Math.max(...values, 0);
+    // A flat or near-flat session (e.g. no trades yet) otherwise yields a
+    // sub-rupee axis whose rounded labels read "0, -0, -1, -1, -1".
+    if (max - min < MIN_AXIS_SPAN_INR) {
+      const mid = (max + min) / 2;
+      min = mid - MIN_AXIS_SPAN_INR / 2;
+      max = mid + MIN_AXIS_SPAN_INR / 2;
+    }
+    const range = max - min;
 
     ctx.strokeStyle = 'rgba(28, 40, 63, 0.7)';
     ctx.lineWidth = 1;
@@ -106,7 +115,7 @@ export function usePnlChart(data: PnlPoint[]) {
     ctx.textAlign = 'right';
     for (let i = 0; i <= 4; i++) {
       const v = max - (range / 4) * i;
-      ctx.fillText(fmt(v, 0), w - 6, pad.top + (ch / 4) * i + 3);
+      ctx.fillText(fmt(Math.round(v) || 0, 0), w - 6, pad.top + (ch / 4) * i + 3);
     }
 
     // Real clock labels spanning the actual data range — not a fixed guess.
@@ -117,6 +126,8 @@ export function usePnlChart(data: PnlPoint[]) {
       const label = new Date(data[idx].t).toLocaleTimeString('en-GB', {
         hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata',
       });
+      // Edge labels anchor inward so they are not clipped by the canvas edge.
+      ctx.textAlign = i === 0 ? 'left' : i === labelCount - 1 ? 'right' : 'center';
       ctx.fillText(label, xFor(idx), h - 6);
     }
   }, [data]);

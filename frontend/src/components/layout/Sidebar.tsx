@@ -48,26 +48,36 @@ function NavSection({ title, items, activePage, onNavigate }: { title: string; i
     <>
       <div className="text-[9px] font-mono text-muted uppercase tracking-[0.15em] px-3 py-2 font-semibold">{title}</div>
       {items.map((item) => (
-        <div
+        <button
+          type="button"
           key={item.id}
           onClick={() => onNavigate(item.id)}
-          className={`flex items-center gap-[9px] px-3.5 py-2 rounded-md cursor-pointer transition-all text-[12.5px] font-medium whitespace-nowrap
+          aria-current={activePage === item.id ? 'page' : undefined}
+          className={`w-full flex items-center gap-[9px] px-3.5 py-2.5 lg:py-2 rounded-md cursor-pointer transition-colors text-[13px] lg:text-[12.5px] font-medium whitespace-nowrap text-left border-l-2
+            focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent
             ${activePage === item.id
-              ? 'text-accent bg-accent/8 font-semibold'
-              : 'text-muted hover:text-white hover:bg-surface-200'}`}
+              ? 'text-accent bg-accent/8 font-semibold border-accent'
+              : 'text-muted border-transparent hover:text-white hover:bg-surface-200'}`}
         >
           {item.icon}
           {item.label}
           {item.badge !== undefined && (
             <span className="ml-auto bg-danger/20 text-danger text-[9.5px] font-mono px-1.5 py-0.5 rounded">{item.badge}</span>
           )}
-        </div>
+        </button>
       ))}
     </>
   );
 }
 
-export function Sidebar({ activePage, onNavigate }: { activePage: string; onNavigate: (id: string) => void }) {
+interface SidebarProps {
+  activePage: string;
+  onNavigate: (id: string) => void;
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export function Sidebar({ activePage, onNavigate, isOpen, onClose }: SidebarProps) {
   const { state } = useApp();
   const hasData = state.marketSource !== 'none';
   const tickAge = state.marketTickAgeSec;
@@ -77,7 +87,16 @@ export function Sidebar({ activePage, onNavigate }: { activePage: string; onNavi
   );
 
   return (
-    <aside className="w-[215px] min-w-[215px] bg-surface-100 border-r border-border flex flex-col justify-between">
+    <>
+    {isOpen && (
+      <div className="fixed inset-0 top-14 z-30 bg-black/60 backdrop-blur-[1px] lg:hidden" onClick={onClose} aria-hidden="true" />
+    )}
+    {/* Below lg the sidebar is an off-canvas drawer; from lg up it is static. */}
+    <aside
+      className={`fixed top-14 bottom-0 left-0 z-40 w-[240px] lg:static lg:w-[215px] lg:min-w-[215px] lg:translate-x-0
+        bg-surface-100 border-r border-border flex flex-col justify-between transition-transform duration-200 ease-out
+        ${isOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}
+    >
       <nav className="p-3 space-y-0.5 overflow-y-auto flex-1">
         <NavSection title="Trading Core" items={tradingItems} activePage={activePage} onNavigate={onNavigate} />
         <NavSection title="Agentic Intel" items={agentItems} activePage={activePage} onNavigate={onNavigate} />
@@ -111,6 +130,7 @@ export function Sidebar({ activePage, onNavigate }: { activePage: string; onNavi
         />
       </div>
     </aside>
+    </>
   );
 }
 

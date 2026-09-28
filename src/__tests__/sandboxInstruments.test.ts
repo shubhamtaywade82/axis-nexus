@@ -16,7 +16,7 @@ describe('sandboxInstruments', () => {
     );
     expect(leg?.securityId).toBe('46026');
     expect(leg?.quantity).toBe(65);
-    expect(leg?.tickSize).toBe(5);
+    expect(leg?.tickSize).toBe(0.05); // scrip master reports paise
   });
 
   it('returns null when instrument not found', async () => {
@@ -30,5 +30,7 @@ describe('sandboxInstruments', () => {
   it('rounds limit price to the contract tick size', () => {
     expect(roundToTick(123.2, 5)).toBe(125);
     expect(roundToTick(122.4, 5)).toBe(120);
+    expect(roundToTick(123.23, 0.05)).toBe(123.25);
+    expect(roundToTick(123.45, 0.05)).toBe(123.45);
   });
 });

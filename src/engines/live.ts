@@ -49,19 +49,27 @@ export class LiveExecutionEngine {
 
     eventBus.log('TRADE', `Placing LIVE order ${transaction_type} ${quantity} × ${security_id} (${correlation_id})`, 'live_engine');
 
+    // Dhan truncates correlationId to 25 chars; the waiter must use the same
+    // key the order-update WS will echo back, or it can never match.
+    const brokerCorrelationId = correlation_id ? String(correlation_id).slice(0, 25) : undefined;
     // Register the waiter BEFORE placing — a fast fill can beat the HTTP response.
-    const settled = this.tracker.waitFor(correlation_id, { timeoutMs: 30000 });
+    const settled = brokerCorrelationId ? this.tracker.waitFor(brokerCorrelationId, { timeoutMs: 30000 }) : Promise.reject(new Error('no correlation id'));
+    settled.catch(() => { /* observed below; avoids an unhandled rejection if place() throws */ });
 
-    await this.client.orders.place({
-      correlationId: correlation_id ? String(correlation_id).slice(0, 25) : undefined,
-      securityId: String(security_id),
-      exchangeSegment: exchange_segment,
-      transactionType: transaction_type,
-      orderType: order_type,
-      quantity,
-      price,
-      productType: params.product_type || 'INTRADAY',
-    });
+    try {
+      await this.client.orders.place({
+        correlationId: brokerCorrelationId,
+        securityId: String(security_id),
+        exchangeSegment: exchange_segment,
+        transactionType: transaction_type,
+        orderType: order_type,
+        quantity,
+        price,
+        productType: params.product_type || 'INTRADAY',
+      });
+    } catch (e: any) {
+      return this.reject(correlation_id, `Order placement failed: ${e.message}`);
+    }
 
     let fill: any = null;
     try {
@@ -70,6 +78,10 @@ export class LiveExecutionEngine {
       // Timeout is not fatal — the order lives at the broker. Report pending.
       eventBus.log('WARN', `Order ${correlation_id} placed but settlement not observed yet (${e.message})`, 'live_engine');
       fill = { status: 'PENDING', filledQuantity: 0, averagePrice: price };
+    }
+    if (['REJECTED', 'CANCELLED', 'EXPIRED'].includes(String(fill.status))) {
+      this.portfolio?.invalidate();
+      return this.reject(correlation_id, fill.state?.omsErrorDescription || `Order ${String(fill.status).toLowerCase()} by broker`);
     }
 
     const fillPayload = {
@@ -85,7 +97,7 @@ export class LiveExecutionEngine {
 
     eventBus.emit('order', { kind: 'fill', ...fillPayload });
     journal.append('order_result', { status: fill.status || 'TRADED', ...fillPayload });
-    this.portfolio?.recordOrderOutcome({ status: fill.status === 'REJECTED' ? 'REJECTED' : 'TRADED' });
+    this.portfolio?.recordOrderOutcome({ status: 'TRADED' });
     await redisPublisher.publish('dhan:execution:fills', JSON.stringify(fillPayload)).catch(() => {});
     // The broker's own position/wallet state just changed — force the NEXT
     // read to poll rather than serve a snapshot from before this fill.
@@ -117,5 +129,13 @@ export class LiveExecutionEngine {
 
     this.market.addInstruments([{ securityId: String(security_id), exchangeSegment: exchange_segment }]);
     return fill;
+  }
+
+  private reject(correlationId: string, reason: string): { status: 'REJECTED'; reason: string } {
+    eventBus.log('ERROR', `Live order REJECTED for ${correlationId}: ${reason}`, 'live_engine');
+    eventBus.emit('order', { kind: 'rejection', correlationId, reason });
+    journal.append('order_result', { correlation_id: correlationId, status: 'REJECTED', reason, mode: 'live' });
+    this.portfolio?.recordOrderOutcome({ status: 'REJECTED' });
+    return { status: 'REJECTED', reason };
   }
 }

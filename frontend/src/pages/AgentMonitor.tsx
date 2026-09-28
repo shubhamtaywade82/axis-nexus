@@ -51,7 +51,7 @@ export function AgentMonitor() {
         </Card>
       </div>
 
-      <Card className="col-span-3 p-4 flex flex-col h-[calc(100vh-140px)]">
+      <Card className="lg:col-span-3 p-4 flex flex-col h-[70vh] lg:h-[calc(100vh-140px)]">
         <div className="flex items-center justify-between pb-3 border-b border-border mb-3">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-white">Event Log Telemetry Stream</span>

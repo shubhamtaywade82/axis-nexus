@@ -66,7 +66,7 @@ export function ResearchConsole() {
 
   return (
     <div className="space-y-4 max-w-[1400px] mx-auto pb-10">
-      <div className="flex items-center gap-1 bg-surface-100 p-1 border border-border rounded-lg w-fit">
+      <div className="flex items-center gap-1 bg-surface-100 p-1 border border-border rounded-lg w-fit max-w-full overflow-x-auto">
         <button
           onClick={() => setViewMode('dashboard')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold cursor-pointer transition-all ${viewMode === 'dashboard' ? 'bg-accent text-black font-bold' : 'text-muted hover:text-white'}`}

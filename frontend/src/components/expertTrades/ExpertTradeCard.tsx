@@ -84,7 +84,7 @@ export function ExpertTradeCard({ trade, onViewDetail }: { trade: ExpertTrade; o
 
       <LevelBar trade={trade} position={axisPosition(trade)} />
 
-      <div className="grid grid-cols-4 gap-2 my-3 text-center text-[10px] font-mono">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 my-3 text-center text-[10px] font-mono">
         <LevelStat label="Stop" value={trade.levels.stopLoss} className="text-danger" />
         <LevelStat label="Entry" value={trade.levels.entry} className="text-sky" />
         <LevelStat label="Target 1" value={trade.levels.target1} className="text-accent" />

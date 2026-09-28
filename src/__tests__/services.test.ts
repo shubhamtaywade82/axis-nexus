@@ -12,7 +12,7 @@ import {
   initDatabase, dbMode, executePaperOrder, getPaperWallet,
   listPaperPositions, closeAllPaperPositions, markPositionsToMarket,
   resetPaperWallet, pool, saveRiskState, reconcileLedger, findMissingOrders,
-  closePaperPosition, createPaperStrategy, adjustWalletMargin,
+  closePaperPosition, createPaperStrategy, adjustWalletMargin, getTodayOrderStats,
 } from '../db';
 
 /**
@@ -156,6 +156,21 @@ describe('Money-path math — fees, margin, sign flips', () => {
     const sell = await executePaperOrder({ symbol: 'FEETEST2', securityId: '44001', quantity: 50, transactionType: 'SELL', price: 100 });
     // turnover 5000: brokerage 20 + STT 5.00 + exchange 2.5 + sebiFee ~0 + GST 4.05, no stamp duty
     expect((sell as any).charges).toBeCloseTo(31.55, 2);
+  });
+
+  it('should price a re-entry at its own fill when the previous trade on the symbol closed flat', async () => {
+    await executePaperOrder({ symbol: 'REENTRY', securityId: '44010', quantity: 50, transactionType: 'BUY', price: 100 });
+    await executePaperOrder({ symbol: 'REENTRY', securityId: '44010', quantity: 50, transactionType: 'SELL', price: 120 });
+    const reopened: any = await executePaperOrder({ symbol: 'REENTRY', securityId: '44010', quantity: 50, transactionType: 'BUY', price: 200 });
+    expect(reopened.avgPrice).toBeCloseTo(200, 2); // was 150: blended the closed trade's 100
+  });
+
+  it('should count a closing loss streak even though entry fills realize zero', async () => {
+    for (const exitPrice of [90, 80]) {
+      await executePaperOrder({ symbol: 'STREAK', securityId: '44011', quantity: 10, transactionType: 'BUY', price: 100 });
+      await executePaperOrder({ symbol: 'STREAK', securityId: '44011', quantity: 10, transactionType: 'SELL', price: exitPrice });
+    }
+    expect((await getTodayOrderStats()).consecutiveLosses).toBe(2);
   });
 
   it('blocks full premium on a long open, the resolver-provided multiple on a short open', async () => {

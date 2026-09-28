@@ -175,7 +175,7 @@ function PositionCard({ state }: { state: ScalpState }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 text-sm">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
         <div>
           <div className="text-gray-500 text-xs">Entry</div>
           <div className="font-mono">₹{fmt(state.entryPrice)}</div>
@@ -200,7 +200,7 @@ function PositionCard({ state }: { state: ScalpState }) {
 
       <RatchetBar state={state} />
 
-      <div className="grid grid-cols-4 gap-3 text-xs text-gray-400">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-gray-400">
         <div><span className="text-gray-600">R:</span> {state.rMultiple.toFixed(2)}R</div>
         <div><span className="text-gray-600">Δ:</span> {state.delta.toFixed(2)}</div>
         <div><span className="text-gray-600">Fees:</span> ₹{fmt(state.feesPerLot * state.quantity, 0)}</div>

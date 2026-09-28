@@ -752,12 +752,13 @@ export function portfolioRoutes(
           const pos = positions.find((p) => p.tradingSymbol === leg.instrument || (leg.securityId && String(p.securityId) === String(leg.securityId)));
           const ltp = pos ? market.getLtp(String(pos.securityId)) || pos.ltp : undefined;
           const legKey = { securityId: String(leg.securityId || pos?.securityId), exchangeSegment: leg.exchangeSegment || pos?.exchangeSegment || 'NSE_FNO' };
-          if (isLocalPaper()) {
-            await closePaperPosition(legKey, ltp);
-          } else if (portfolio) {
-            await portfolio.closePosition(legKey, ltp);
+          const closed: any = isLocalPaper()
+            ? await closePaperPosition(legKey, ltp)
+            : portfolio ? await portfolio.closePosition(legKey, ltp) : { status: 'noop' };
+          // A rejected close keeps its stop-loss protection armed.
+          if (pos && (closed.status === 'TRADED' || closed.status === 'noop')) {
+            market.monitor.untrack(pos.exchangeSegment, String(pos.securityId));
           }
-          if (pos) market.monitor.untrack(pos.exchangeSegment, String(pos.securityId));
         }
         await updatePaperStrategyStatus(id, 'STOPPED');
       }

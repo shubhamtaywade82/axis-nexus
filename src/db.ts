@@ -734,13 +734,16 @@ export async function cancelPaperOrder(orderId: string): Promise<boolean> {
 
 export async function getTodayOrderStats(targetMode = getTradingMode()) {
   const modeKey = targetMode === 'sandbox' ? 'sandbox' : 'paper';
-  const today = new Date().toDateString();
-  const rows = mem.orders.filter((o: any) => (o.trading_mode || 'paper') === modeKey && new Date(o.created_at).toDateString() === today).slice().reverse();
+  const today = marketClock().istDate;
+  const rows = mem.orders.filter((o: any) => (o.trading_mode || 'paper') === modeKey && istDateOf(o.created_at) === today);
+  // mem.orders is newest-first. Entry fills realize nothing (0), so they
+  // must not break the streak — only closing fills count as win/loss.
   let consecutiveLosses = 0;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const realized = Number(rows[i].realized_pnl || 0);
-    if (realized < 0) consecutiveLosses++;
-    else break;
+  for (const row of rows) {
+    const realized = Number(row.realized_pnl || 0);
+    if (realized === 0) continue;
+    if (realized > 0) break;
+    consecutiveLosses++;
   }
   return {
     total: rows.length,
@@ -748,6 +751,10 @@ export async function getTodayOrderStats(targetMode = getTradingMode()) {
     rejected: rows.filter((r: any) => r.status === 'REJECTED').length,
     consecutiveLosses,
   };
+}
+
+function istDateOf(ts: Date | string): string {
+  return new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
 export interface PaperOrderInput {
@@ -814,9 +821,10 @@ function calculateBuyUpdate(pos: any, qty: number, price: number) {
   const curSellAvg = Number(pos?.sell_avg || 0);
 
   if (curNet >= 0) {
-    const newQty = curBuyQty + qty;
-    const newAvg = (curBuyAvg * curBuyQty + price * qty) / newQty;
-    return { buyQty: newQty, buyAvg: newAvg, sellQty: Number(pos?.sell_qty || 0), sellAvg: curSellAvg, netQty: curNet + qty, realized: 0 };
+    // Weight by the OPEN qty, not cumulative buy_qty: buy_qty keeps already-
+    // closed lots, which would blend a finished trade's price into this one.
+    const newAvg = (curBuyAvg * curNet + price * qty) / (curNet + qty);
+    return { buyQty: curBuyQty + qty, buyAvg: newAvg, sellQty: Number(pos?.sell_qty || 0), sellAvg: curSellAvg, netQty: curNet + qty, realized: 0 };
   }
   const closeQty = Math.min(Math.abs(curNet), qty);
   const realized = (curSellAvg - price) * closeQty;
@@ -833,9 +841,9 @@ function calculateSellUpdate(pos: any, qty: number, price: number) {
   const curSellAvg = Number(pos?.sell_avg || 0);
 
   if (curNet <= 0) {
-    const newQty = curSellQty + qty;
-    const newAvg = (curSellAvg * curSellQty + price * qty) / newQty;
-    return { buyQty: Number(pos?.buy_qty || 0), buyAvg: curBuyAvg, sellQty: newQty, sellAvg: newAvg, netQty: curNet - qty, realized: 0 };
+    const openQty = Math.abs(curNet); // see calculateBuyUpdate
+    const newAvg = (curSellAvg * openQty + price * qty) / (openQty + qty);
+    return { buyQty: Number(pos?.buy_qty || 0), buyAvg: curBuyAvg, sellQty: curSellQty + qty, sellAvg: newAvg, netQty: curNet - qty, realized: 0 };
   }
   const closeQty = Math.min(curNet, qty);
   const realized = (price - curBuyAvg) * closeQty;

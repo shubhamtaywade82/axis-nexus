@@ -43,6 +43,7 @@ export interface ScalpState {
   positionId: string;
   tradingSymbol: string;
   securityId: string;
+  exchangeSegment?: string;
   underlying: string;
   side: 'LONG' | 'SHORT';
 
