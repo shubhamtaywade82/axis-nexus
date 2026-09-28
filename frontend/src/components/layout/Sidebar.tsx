@@ -1,72 +1,111 @@
+import { useEffect, useRef } from 'react';
 import { StatusDot } from '../ui/StatusDot';
 import { useApp } from '../../store/AppContext';
 import {
-  ChartLine, ChessKnight, Layers, Wallet, Receipt, Brain, Satellite, Database,
-  Calculator, Shield, ListChecks, Bell, Terminal, Settings, TrendingUp, BookOpen, Zap, Target,
+  ChartLine, Layers, Brain, BookOpen, Zap, Shield, Server,
 } from 'lucide-react';
 
-interface NavItem {
+interface NavTab {
+  id: string;
+  label: string;
+}
+
+interface NavGroup {
   id: string;
   label: string;
   icon: React.ReactNode;
-  badge?: number;
+  tabs: NavTab[];
 }
 
-const tradingItems: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: <ChartLine size={13} /> },
-  { id: 'strategies', label: 'Strategies', icon: <ChessKnight size={13} /> },
-  { id: 'options-chain', label: 'Option Chain', icon: <Layers size={13} /> },
-  { id: 'positions', label: 'Positions', icon: <Wallet size={13} /> },
-  { id: 'orders', label: 'Order Book', icon: <Receipt size={13} /> },
+/** Sidebar shows one entry per group; a group's pages render as tabs above
+ * the content (see SectionTabs). Page ids stay the URL hash, so deep links
+ * like #positions keep working. */
+const NAV_GROUPS: NavGroup[] = [
+  { id: 'overview', label: 'Dashboard', icon: <ChartLine size={15} />, tabs: [{ id: 'dashboard', label: 'Dashboard' }] },
+  {
+    id: 'trading', label: 'Trading', icon: <Layers size={15} />, tabs: [
+      { id: 'positions', label: 'Positions' },
+      { id: 'orders', label: 'Order Book' },
+      { id: 'strategies', label: 'Strategies' },
+      { id: 'options-chain', label: 'Option Chain' },
+    ],
+  },
+  {
+    id: 'scalping', label: 'Scalping', icon: <Zap size={15} />, tabs: [
+      { id: 'scalp-monitor', label: 'Monitor' },
+      { id: 'scalp-simulator', label: 'Simulator' },
+    ],
+  },
+  {
+    id: 'analytics', label: 'Analytics & Risk', icon: <Shield size={15} />, tabs: [
+      { id: 'margin-risk', label: 'Margin & Risk' },
+      { id: 'greeks-analytics', label: 'Greeks & Vol' },
+      { id: 'options-analysis', label: 'Options Behavior' },
+    ],
+  },
+  {
+    id: 'research', label: 'Research', icon: <BookOpen size={15} />, tabs: [
+      { id: 'research-console', label: 'Research Console' },
+      { id: 'expert-trades', label: 'Expert Trades' },
+    ],
+  },
+  {
+    id: 'agents', label: 'Agents', icon: <Brain size={15} />, tabs: [
+      { id: 'agent-console', label: 'Console' },
+      { id: 'agent-monitor', label: 'Ops Telemetry' },
+      { id: 'agent-tools-memory', label: 'Tools & Memory' },
+    ],
+  },
+  {
+    id: 'system', label: 'System', icon: <Server size={15} />, tabs: [
+      { id: 'alerts', label: 'Alerts' },
+      { id: 'logs', label: 'Logs & Traces' },
+      { id: 'sidekiq-infra', label: 'Jobs' },
+      { id: 'config', label: 'Configuration' },
+    ],
+  },
 ];
 
-const agentItems: NavItem[] = [
-  { id: 'agent-console', label: 'Agent Console', icon: <Brain size={13} /> },
-  { id: 'research-console', label: 'Research Console', icon: <BookOpen size={13} /> },
-  { id: 'expert-trades', label: 'Expert Trades', icon: <Target size={13} /> },
-  { id: 'scalp-monitor', label: 'Scalp Monitor', icon: <Zap size={13} /> },
-  { id: 'scalp-simulator', label: 'Scalp Simulator', icon: <ChartLine size={13} /> },
-  { id: 'agent-monitor', label: 'Ops Telemetry', icon: <Satellite size={13} /> },
-  { id: 'agent-tools-memory', label: 'Tools & Memory', icon: <Database size={13} /> },
-];
+function findNavGroup(pageId: string): NavGroup {
+  return NAV_GROUPS.find((g) => g.tabs.some((t) => t.id === pageId)) ?? NAV_GROUPS[0];
+}
 
-const analyticsItems: NavItem[] = [
-  { id: 'options-analysis', label: 'Options Behavior', icon: <TrendingUp size={13} /> },
-  { id: 'greeks-analytics', label: 'Greeks & Vol', icon: <Calculator size={13} /> },
-  { id: 'margin-risk', label: 'Margin & Risk', icon: <Shield size={13} /> },
-];
+function useUnreadAlertCount(): number {
+  const { state } = useApp();
+  return state.alerts.filter((a) => !a.read).length;
+}
 
-const infraItems: NavItem[] = [
-  { id: 'sidekiq-infra', label: 'Sidekiq Jobs', icon: <ListChecks size={13} /> },
-  { id: 'alerts', label: 'Alerts', icon: <Bell size={13} /> },
-  { id: 'logs', label: 'Logs & Traces', icon: <Terminal size={13} /> },
-  { id: 'config', label: 'Configuration', icon: <Settings size={13} /> },
-];
+function CountBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return <span className="ml-auto bg-danger/20 text-danger text-[9.5px] font-mono px-1.5 py-0.5 rounded">{count}</span>;
+}
 
-function NavSection({ title, items, activePage, onNavigate }: { title: string; items: NavItem[]; activePage: string; onNavigate: (id: string) => void }) {
+/** Tab strip for the active group's pages; renders nothing for single-page groups. */
+export function SectionTabs({ activePage, onNavigate }: { activePage: string; onNavigate: (id: string) => void }) {
+  const unreadAlerts = useUnreadAlertCount();
+  const group = findNavGroup(activePage);
+  if (group.tabs.length < 2) return null;
   return (
-    <>
-      <div className="text-[9px] font-mono text-muted uppercase tracking-[0.15em] px-3 py-2 font-semibold">{title}</div>
-      {items.map((item) => (
-        <button
-          type="button"
-          key={item.id}
-          onClick={() => onNavigate(item.id)}
-          aria-current={activePage === item.id ? 'page' : undefined}
-          className={`w-full flex items-center gap-[9px] px-3.5 py-2.5 lg:py-2 rounded-md cursor-pointer transition-colors text-[13px] lg:text-[12.5px] font-medium whitespace-nowrap text-left border-l-2
-            focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent
-            ${activePage === item.id
-              ? 'text-accent bg-accent/8 font-semibold border-accent'
-              : 'text-muted border-transparent hover:text-white hover:bg-surface-200'}`}
-        >
-          {item.icon}
-          {item.label}
-          {item.badge !== undefined && (
-            <span className="ml-auto bg-danger/20 text-danger text-[9.5px] font-mono px-1.5 py-0.5 rounded">{item.badge}</span>
-          )}
-        </button>
-      ))}
-    </>
+    <div role="tablist" className="flex items-center gap-1 mb-4 border-b border-border overflow-x-auto whitespace-nowrap">
+      {group.tabs.map((tab) => {
+        const isActive = tab.id === activePage;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onNavigate(tab.id)}
+            className={`flex items-center gap-2 px-3.5 py-2 -mb-px text-[12.5px] font-medium border-b-2 transition-colors
+              focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent
+              ${isActive ? 'text-accent border-accent' : 'text-muted border-transparent hover:text-white hover:border-surface-400'}`}
+          >
+            {tab.label}
+            {tab.id === 'alerts' && <CountBadge count={unreadAlerts} />}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -81,10 +120,13 @@ export function Sidebar({ activePage, onNavigate, isOpen, onClose }: SidebarProp
   const { state } = useApp();
   const hasData = state.marketSource !== 'none';
   const tickAge = state.marketTickAgeSec;
-  const unreadAlerts = state.alerts.filter((a) => !a.read).length;
-  const infraItemsWithBadge = infraItems.map((item) =>
-    item.id === 'alerts' && unreadAlerts > 0 ? { ...item, badge: unreadAlerts } : item
-  );
+  const unreadAlerts = useUnreadAlertCount();
+  const activeGroupId = findNavGroup(activePage).id;
+  // Re-opening a group returns to the tab last used in it, not its first tab.
+  const lastTabByGroup = useRef<Record<string, string>>({});
+  useEffect(() => {
+    lastTabByGroup.current[activeGroupId] = activePage;
+  }, [activeGroupId, activePage]);
 
   return (
     <>
@@ -97,11 +139,30 @@ export function Sidebar({ activePage, onNavigate, isOpen, onClose }: SidebarProp
         bg-surface-100 border-r border-border flex flex-col justify-between transition-transform duration-200 ease-out
         ${isOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}
     >
-      <nav className="p-3 space-y-0.5 overflow-y-auto flex-1">
-        <NavSection title="Trading Core" items={tradingItems} activePage={activePage} onNavigate={onNavigate} />
-        <NavSection title="Agentic Intel" items={agentItems} activePage={activePage} onNavigate={onNavigate} />
-        <NavSection title="Analytics & Risk" items={analyticsItems} activePage={activePage} onNavigate={onNavigate} />
-        <NavSection title="Infrastructure" items={infraItemsWithBadge} activePage={activePage} onNavigate={onNavigate} />
+      <nav className="p-3 space-y-1 overflow-y-auto flex-1">
+        {NAV_GROUPS.map((group) => {
+          const isActive = group.id === activeGroupId;
+          return (
+            <button
+              type="button"
+              key={group.id}
+              onClick={() => onNavigate(lastTabByGroup.current[group.id] ?? group.tabs[0].id)}
+              aria-current={isActive ? 'page' : undefined}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-md cursor-pointer transition-colors text-[13px] font-medium whitespace-nowrap text-left border-l-2
+                focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent
+                ${isActive
+                  ? 'text-accent bg-accent/8 font-semibold border-accent'
+                  : 'text-muted border-transparent hover:text-white hover:bg-surface-200'}`}
+            >
+              {group.icon}
+              {group.label}
+              {group.id === 'system' && <CountBadge count={unreadAlerts} />}
+              {group.tabs.length > 1 && !isActive && !(group.id === 'system' && unreadAlerts > 0) && (
+                <span className="ml-auto text-[9.5px] font-mono text-muted/70">{group.tabs.length}</span>
+              )}
+            </button>
+          );
+        })}
       </nav>
 
       <div className="p-3 border-t border-border bg-surface-50 space-y-1.5">

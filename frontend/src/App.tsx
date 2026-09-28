@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { AppProvider, useApp } from "./store/AppContext";
 import { Header } from "./components/layout/Header";
-import { Sidebar } from "./components/layout/Sidebar";
+import { Sidebar, SectionTabs } from "./components/layout/Sidebar";
 import { ToastContainer, ModalContainer } from "./components/layout/ToastModal";
 import { Dashboard } from "./pages/Dashboard";
 import { Strategies } from "./pages/Strategies";
@@ -240,7 +240,10 @@ function AppInner() {
       />
       <div className="flex-1 flex overflow-hidden relative">
         <Sidebar activePage={page} onNavigate={handleNavigate} isOpen={isNavOpen} onClose={() => setIsNavOpen(false)} />
-        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 md:p-5">{renderPage()}</main>
+        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 md:p-5">
+          <SectionTabs activePage={page} onNavigate={handleNavigate} />
+          {renderPage()}
+        </main>
       </div>
     </div>
   );
