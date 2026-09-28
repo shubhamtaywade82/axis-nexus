@@ -39,6 +39,49 @@ body {
 	font-family: var(--font-sans);
 }
 
+/* Scrollbars — thin, dark, accent on interaction. The standard properties
+ * cover Firefox and Chromium 121+; the ::-webkit-* rules cover Safari
+ * (Chromium ignores them once scrollbar-color is set). */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-surface-400) transparent;
+}
+
+*:hover {
+	scrollbar-color: var(--color-surface-500) transparent;
+}
+
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--color-surface-400);
+	border-radius: 8px;
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: color-mix(in srgb, var(--color-accent) 45%, var(--color-surface-400));
+	background-clip: padding-box;
+}
+
+/* Single-line swipe strips (tickers, tabs) stay scrollable without a bar. */
+.no-scrollbar {
+	scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+	display: none;
+}
+
 .bg-grid {
 	background-color: var(--color-bg);
 	background-image:

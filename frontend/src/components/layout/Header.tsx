@@ -171,7 +171,7 @@ export function Header({ pageTitle, pageSubtitle, onKillSwitch, onToggleMenu }: 
       </div>
     </header>
     {/* Compact live strip so small screens still see indices + P&L. */}
-    <div className="2xl:hidden flex items-center gap-4 px-3 md:px-5 py-1.5 bg-surface-50 border-b border-border font-mono text-xs overflow-x-auto whitespace-nowrap">
+    <div className="2xl:hidden flex items-center gap-4 px-3 md:px-5 py-1.5 bg-surface-50 border-b border-border font-mono text-xs overflow-x-auto whitespace-nowrap no-scrollbar">
       <div className="sm:hidden flex items-center gap-1.5 tabular-nums">
         <span className="text-muted text-[10px]">P&amp;L</span>
         <span className={`font-semibold ${pnlClass(totalPnl)}`}><LerpNumber value={totalPnl} format={fmtINR} /></span>

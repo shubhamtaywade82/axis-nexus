@@ -71,7 +71,7 @@ export function Dashboard({ onNavigate, onDeploy }: DashboardProps) {
               View All ({state.strategies.filter((s) => s.status !== "STOPPED").length}) →
             </button>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2 scrollbar-thin scrollbar-thumb-border hover:scrollbar-thumb-muted/30">
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2">
             {state.strategies.filter((s) => s.status !== "STOPPED").length === 0 ? (
               <div className="text-center py-6 text-muted text-xs">No active strategies.</div>
             ) : (

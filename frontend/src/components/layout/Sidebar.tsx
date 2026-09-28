@@ -86,7 +86,7 @@ export function SectionTabs({ activePage, onNavigate }: { activePage: string; on
   const group = findNavGroup(activePage);
   if (group.tabs.length < 2) return null;
   return (
-    <div role="tablist" className="flex items-center gap-1 mb-4 border-b border-border overflow-x-auto whitespace-nowrap">
+    <div role="tablist" className="flex items-center gap-1 mb-4 border-b border-border overflow-x-auto whitespace-nowrap no-scrollbar">
       {group.tabs.map((tab) => {
         const isActive = tab.id === activePage;
         return (
